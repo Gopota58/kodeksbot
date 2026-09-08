@@ -1,3 +1,27 @@
+## 2026-09-09 — Публикация KodeksBot на GitHub (публичный, профессиональный вид)
+
+### Сделано (Done)
+- Репозиторий `Gopota58/kodeksbot` сделан **публичным** через GitHub REST API (PAT, `PATCH /repos/...` visibility=public).
+- Написан `README.md` (русский): бейджи (License/Python/GigaChat/Chroma/Hybrid+RRF/Yandex Cloud/RAG/CI), mermaid-схема архитектуры, раздел «Демо», быстрый старт (локально + Docker), деплой в Yandex Cloud, таблица `.env`, структура, roadmap, security.
+- Освежены `docs/ARCHITECTURE.md`, `docs/DEPLOY.md`, `docs/API.md` под реальный стек: Giga-Embeddings-instruct-480M-0826 (Сбер, офлайн) вместо rubert-tiny2; деплой на Compute VM (Docker Compose, CPU) вместо serverless-гипотезы; порог иррелевантности RRF 1.35.
+- Добавлен скриншот живого веб-UI `docs/assets/ui.png` (1280×900, headless Chrome со `89.169.185.183:8000`) + ссылка на живой демо-сервер в README.
+- Заданы description + topics репозитория через API.
+- Проверено: секретов в отслеживаемых файлах нет (`.env` в .gitignore, история чиста); README отдаётся публично (HTTP 200).
+
+### Следующие шаги (Next Steps)
+- (опц.) Подчистить этот NOTES.md перед публичностью — внутренние заметки/грабли видны всем.
+- (опц.) Reranker (cross-encoder) поверх гибридной выдачи; смена эмбеддинга на `ai-forever/sbert_large_nlu_ru`.
+- (опц.) Ротировать GitHub-токен (PAT передавался в чат — скомпрометирован).
+- (опц.) Синхронизировать `E:\HH\NOTES.md` (HQ): Гэп 1 давно закрыт, но там числится в Next Steps.
+
+### Грабли и находки (Gotchas)
+- Приватный GitHub-репо через неавторизованный API отдаёт **404** (как будто не существует) — доступность проверяй `git ls-remote`, а не `api.github.com` без токена.
+- Описание репо через PowerShell `Invoke-RestMethod` надо слать **строго как UTF-8 байты** (`[System.Text.Encoding]::UTF8.GetBytes($json)`); `-Body` строкой из `ConvertTo-Json` даёт mojibake кириллицы. См. vault: wiki/concepts/github-make-repo-public и wiki/concepts/ps-invoke-webrequest-utf8.
+- Headless-скриншот живого UI: Chrome в `C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`; `chrome --headless=new --no-sandbox --disable-gpu --screenshot=out.png --window-size=1280,900 --virtual-time-budget=8000 <url>`. Модель hy3 НЕ умеет читать картинки — проверяй размер/размеры PNG через IHDR, а не визуально.
+- `gh` CLI в окружении не установлен — работали через `git` + GitHub REST API с PAT.
+
+---
+
 ## 2026-09-08 (продолжение 3) — Деплой КодексБот в Yandex Cloud (Docker, CPU, бесплатный грант)
 
 ### Сделано (Done)
