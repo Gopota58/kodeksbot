@@ -1,3 +1,44 @@
+## 2026-09-08 (продолжение 2) — Интеграция Giga-Embeddings-instruct-480M-0826 + GPU-реиндексация + GitHub
+
+### Сделано (Done)
+- Локальная модель `E:\Project\models\Giga-Embeddings-instruct-480M-0826` (Сбер, Qwen3Bidirectional,
+  1024-dim, bf16, SentenceTransformer-формат с `trust_remote_code=True` → `modeling_gigarembed.py`)
+  интегрирована в RAG.
+- `config.py`: `model_dir` → `models/Giga-Embeddings-instruct-480M-0826`, `embedding_model_id` → имя
+  модели, `embed_device="cuda"`, `embed_normalize=True`, добавлен `embed_trust_remote_code=True`.
+  Офлайн-режим сохранён (`HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1`).
+- `rag/engine.py`:
+  - Новый класс `InstructGigaEmbeddings(Embeddings)`: грузит `SentenceTransformer` с `trust_remote_code`,
+    `embed_documents` с `prompt_name="document"`, `embed_query` с `prompt_name="query"` (instruct-префикс
+    только у query). `batch_size=32`, внешний лимит 4096 чанков/итерацию.
+  - `build_embeddings()` выбирает `InstructGigaEmbeddings`, если в `config_sentence_transformers.json`
+    задан `prompts.query`, иначе `HuggingFaceEmbeddings` с `trust_remote_code`.
+  - PDF-загрузчик: `fitz` (PyMuPDF) с фолбэком на `pypdf` (ускорение ~30с против минут).
+  - Порог иррелевантности `_MAX_IRRELEVANT_DISTANCE` поднят **0.60 → 1.35** (шкала дистанций Giga иная:
+    REL 0.88..1.33, NOISE 1.37..1.65; порог 1.35 чисто разделяет).
+- **Реиндексация на GPU (RTX 4060 8Gb)**: `chroma_db` пересобран → **40436 чанков**, коллекция
+  `kodeksbot`. torch CUDA-сборка (`torch==2.11.0+cu128`), VRAM ~3.5 ГБ.
+- Сервер перезапущен (`RAG_DISABLE_WATCHER=1`), модель на GPU; проверка `/ask`: зарплата/долг → 8
+  источников, пельмени/соседи-шум → честно «нет ответа».
+- `.gitignore` уже корректен (исключает `.env`, `chroma_db/`, `models/`, `data/docs/`, `*.log`).
+- Создан приватный GitHub-репозиторий `kodeksbot`, сделан коммит, push в `main`.
+
+### Грабли
+- **torch CPU-only в venv**: ставил `torch==2.11.0+cu128` с индекса cu128 (cu124 не имеет колёс под
+  Python 3.14.7). Без CUDA эмбеддинги падают/OOM.
+- **Chroma cosine distance** = `1 - cosine` для нормализованных векторов → чем выше, тем хуже.
+  Старый порог 0.60 (для rubert-tiny2) отсекал ВСЕ релевантные запросы новой модели.
+- **BM25-вес** (kw_w=2.5 > vs_w=1.0) ловит морфологию, но «соседи шумят» даёт vector_dist=1.55
+  (бытовой запрос далёк от сухих чанков кодексов) → правильно отсекается порогом.
+- Токен GitHub (из Windows Credential Manager) случайно попал в вывод pwsh — рекомендую ротировать.
+
+### Следующие шаги
+- (опц.) Поднять качество: reranker (cross-encoder) поверх гибридной выдачи.
+- (опц.) Извлечь корпус `data/docs/` в git-lfs / отдельное хранилище (сейчас в .gitignore).
+- (опц.) Ротировать секреты, упомянутые в переписке (в т.ч. GitHub-токен).
+
+---
+
 ## 2026-09-08 (продолжение) — UI-переписывание + диагностика качества поиска
 
 ### Сделано (Done)

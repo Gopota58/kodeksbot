@@ -162,11 +162,14 @@
             max-width: 640px;
             animation: fadeIn 0.3s ease;
         }
-        .sources-title {
+        .sources-toggle {
             font-size: 0.74rem; color: var(--accent);
             text-transform: uppercase; letter-spacing: 0.6px;
-            margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+            background: none; border: none; padding: 4px 0; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 6px;
         }
+        .sources-toggle:hover { text-decoration: underline; }
+        .sources-body { margin-top: 6px; }
         .src-card {
             background: var(--panel-2);
             border: 1px solid var(--border);
@@ -431,15 +434,31 @@
             bubble.textContent = msg.text;
             m.appendChild(bubble);
 
-            // карточки источников только у бота
+            // карточки источников только у бота — сворачиваем в раскрывающуюся ссылку,
+            // чтобы не захламлять чат (раскрываются по клику)
             if (msg.role === 'bot' && Array.isArray(msg.sources) && msg.sources.length) {
                 const box = document.createElement('div');
                 box.className = 'sources';
-                const title = document.createElement('div');
-                title.className = 'sources-title';
-                title.textContent = `📚 Источники (${msg.sources.length})`;
-                box.appendChild(title);
-                msg.sources.forEach((s) => box.appendChild(sourceCard(s)));
+
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'sources-toggle';
+                const label = (open) => (open ? '▾' : '▸') + ` 📚 Источники (${msg.sources.length})`;
+                toggle.textContent = label(false);
+
+                const body = document.createElement('div');
+                body.className = 'sources-body';
+                body.style.display = 'none';
+                msg.sources.forEach((s) => body.appendChild(sourceCard(s)));
+
+                toggle.onclick = () => {
+                    const hidden = body.style.display === 'none';
+                    body.style.display = hidden ? 'block' : 'none';
+                    toggle.textContent = label(!hidden);
+                };
+
+                box.appendChild(toggle);
+                box.appendChild(body);
                 m.appendChild(box);
             }
 

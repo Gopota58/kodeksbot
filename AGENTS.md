@@ -32,7 +32,17 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
 ## 4. Грабли и правила
 - GigaChat подключён «родным» `langchain-gigachat`: в `.env` → `LLM_PROVIDER=gigachat`, `LLM_API_KEY` = Authorization key из developers.sber.ru, `LLM_MODEL` = id из `GET /v1/models`. Ключ — только в `.env`, не коммитить.
 - На Windows для GigaChat нужен российский root-CA: `GIGACHAT_CA_BUNDLE_FILE` (gosuslugi.ru/crt) либо `GIGACHAT_VERIFY_SSL_CERTS=false` для dev.
-- Эмбеддинги локальные: `cointegrated/rubert-tiny2` (demo) или `ai-forever/sbert_large_nlu_ru` (точность). Модель лежит в `models/rubert-tiny2` и грузится **строго локально, без сети** (`HF_HUB_OFFLINE=1` в `config.py`, `resolve_embedding_model()` никогда не возвращает HF repo-id). Смена модели ⇒ пересборка индекса.
+- Эмбеддинги — локальная **Giga-Embeddings-instruct-480M-0826** (Сбер, 1024-dim, bf16,
+  SentenceTransformer-формат с `trust_remote_code=True` → `modeling_gigarembed.py`). Лежит в
+  `models/Giga-Embeddings-instruct-480M-0826`, грузится **строго локально без сети**
+  (`HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` в `config.py`). Instruct-промпты: query-префикс
+  `Instruct: Given a query, retrieve relevant passages\nQuery: ` (документы без префикса).
+  Смена модели ⇒ пересборка индекса.
+- Эмбеддинги считаются на **GPU** (`embed_device="cuda"` в `config.py`); для reindex на GPU нужна
+  CUDA-сборка torch (`torch==2.11.0+cu128`). VRAM ~3.5 ГБ под Giga-480M.
+- Порог иррелевантности `_MAX_IRRELEVANT_DISTANCE = 1.35` в `rag/engine.py` (косинусная дистанция
+  Chroma: выше — не релевантно; откалибровано под Giga: REL≈0.88..1.33, NOISE≈1.37..1.65).
+  Старый порог 0.60 (для rubert-tiny2) не годится — отсекал все релевантные запросы.
 - Векторное хранилище — Chroma (`chroma_db/`); переиндексация без удаления папки (под FileLock). Авто-reindex по вотчеру `data/docs/`.
 - Загрузчики: PDF (pypdf, постранично → metadata.page), DOCX (python-docx), TXT (авто-кодировка). Добавление документа → полная переиндексация.
 - Для генерации обязателен ключ GigaChat; retrieval работает и без него, но ответа не будет.

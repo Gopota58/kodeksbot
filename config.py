@@ -36,12 +36,13 @@ class Settings(BaseSettings):
     docs_dir: str = str(BASE_DIR / "data" / "docs")   # корпус: 26 кодексов РФ (PDF/DOCX)
     chroma_dir: str = str(BASE_DIR / "chroma_db")
     collection_name: str = "kodeksbot"
-    model_dir: str = str(BASE_DIR / "models" / "rubert-tiny2")
-    embedding_model_id: str = "cointegrated/rubert-tiny2"
+    model_dir: str = str(BASE_DIR / "models" / "Giga-Embeddings-instruct-480M-0826")
+    embedding_model_id: str = "Giga-Embeddings-instruct-480M-0826"
 
     # --- Параметры эмбеддингов ---
-    embed_device: str = "cpu"
+    embed_device: str = "cuda"   # RTX 4060 (8Gb); если CUDA-торч недоступна — "cpu"
     embed_normalize: bool = True
+    embed_trust_remote_code: bool = True  # Giga-модель требует кастомный код Сбера
 
     # --- Провайдер эмбеддингов ---
     # "local" — HuggingFace (cointegrated/rubert-tiny2), грузится СТРОГО локально

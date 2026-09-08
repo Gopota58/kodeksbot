@@ -78,15 +78,27 @@ def _load_file(path: str) -> list:
     if ext == ".txt":
         return AutoDetectTextLoader(str(p)).load()
     if ext == ".pdf":
-        from pypdf import PdfReader
-        reader = PdfReader(str(p))
-        docs = []
-        for i, page in enumerate(reader.pages, 1):
-            txt = page.extract_text() or ""
-            if txt.strip():
-                # метаданные позволяют цитировать «документ + страница»
-                docs.append(Document(page_content=txt, metadata={"source": p.name, "page": i}))
-        return docs
+        try:
+            import fitz  # PyMuPDF — значительно быстрее pypdf и не зависает на проблемных PDF
+            doc = fitz.open(str(p))
+            docs = []
+            for i, page in enumerate(doc, 1):
+                txt = page.get_text() or ""
+                if txt.strip():
+                    # метаданные позволяют цитировать «документ + страница»
+                    docs.append(Document(page_content=txt, metadata={"source": p.name, "page": i}))
+            doc.close()
+            return docs
+        except Exception:
+            from pypdf import PdfReader
+            reader = PdfReader(str(p))
+            docs = []
+            for i, page in enumerate(reader.pages, 1):
+                txt = page.extract_text() or ""
+                if txt.strip():
+                    # метаданные позволяют цитировать «документ + страница»
+                    docs.append(Document(page_content=txt, metadata={"source": p.name, "page": i}))
+            return docs
     if ext == ".docx":
         import docx
         document = docx.Document(str(p))
@@ -133,7 +145,97 @@ class HashingEmbeddings(Embeddings):
         return self._embed(text)
 
 
+class InstructGigaEmbeddings(Embeddings):
+    """Обёртка над SentenceTransformer для instruct-эмбеддинг-моделей (Сбер Giga).
+
+    SentenceTransformer хранит инструкции в config_sentence_transformers.json
+    (prompts.query / prompts.document). При encode с prompt_name подставляется
+    нужный префикс: для query — «Instruct: Given a query, retrieve relevant
+    passages\nQuery: », для документов — пусто. Обычный HuggingFaceEmbeddings не
+    применяет prompt_name дифференцированно, поэтому для instruct-моделей нужна
+    эта обёртка. Кастомный код Сбера (modeling_gigarembed.py) требует
+    trust_remote_code=True.
+    """
+
+    def __init__(self, model_path, device="cpu", normalize=True, trust_remote_code=True):
+        from sentence_transformers import SentenceTransformer
+        self.model = SentenceTransformer(
+            model_path,
+            device=device,
+            trust_remote_code=trust_remote_code,
+            model_kwargs={"torch_dtype": "auto"},
+        )
+        self.normalize = normalize
+
+    def embed_documents(self, texts):
+        # Батчируем сами, чтобы видеть прогресс. batch_size ограничен VRAM RTX 4060
+        # (8 Gb): крупные батчи вызывают CUDA OOM из-за квадратичных attention-матриц.
+        outer = 4096
+        out = []
+        n = len(texts)
+        for i in range(0, n, outer):
+            chunk = texts[i:i + outer]
+            emb = self.model.encode(
+                chunk,
+                prompt_name="document",
+                normalize_embeddings=self.normalize,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+                batch_size=32,
+            )
+            out.append(np.asarray(emb, dtype=np.float32))
+            print(f"[embed] {min(i + outer, n)}/{n} docs", flush=True)
+        return np.concatenate(out).tolist() if out else []
+
+    def embed_query(self, text):
+        emb = self.model.encode(
+            [text],
+            prompt_name="query",
+            normalize_embeddings=self.normalize,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        return np.asarray(emb[0], dtype=np.float32).tolist()
+
+
 # --- Фабрики ---
+def _load_local_embeddings(s):
+    """Локальные эмбеддинги (sentence-transformers/torch), строго с диска.
+
+    Обычные модели (rubert-tiny2) — через HuggingFaceEmbeddings. Instruct-модели
+    (Giga-Embeddings-instruct-*) — через InstructGigaEmbeddings (подставляет
+    query/document-промпты, обязателен trust_remote_code для кастомного кода Сбера).
+    """
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    local_model = s.resolve_embedding_model()
+    trust = getattr(s, "embed_trust_remote_code", False)
+
+    # Детект instruct-режима: config_sentence_transformers.json с непустым query-промптом
+    st_cfg = pathlib.Path(local_model) / "config_sentence_transformers.json"
+    is_instruct = False
+    if st_cfg.exists():
+        try:
+            data = json.loads(st_cfg.read_text(encoding="utf-8"))
+            prompts = (data or {}).get("prompts") or {}
+            is_instruct = bool(prompts.get("query"))
+        except Exception:
+            is_instruct = False
+
+    if is_instruct:
+        return InstructGigaEmbeddings(
+            local_model, device=s.embed_device, normalize=s.embed_normalize,
+            trust_remote_code=trust,
+        )
+    from langchain_huggingface import HuggingFaceEmbeddings
+    return HuggingFaceEmbeddings(
+        model_name=local_model,
+        model_kwargs={"device": s.embed_device, "trust_remote_code": trust},
+        encode_kwargs={"normalize_embeddings": s.embed_normalize},
+        cache_folder=str(pathlib.Path(local_model).parent),
+    )
+
+
 def build_embeddings(s=None):
     s = s or default_settings
     if getattr(s, "embed_provider", "local") == "api":
@@ -146,19 +248,10 @@ def build_embeddings(s=None):
         return OpenAIEmbeddings(**kwargs)
     if getattr(s, "embed_provider", "local") == "hash":
         return HashingEmbeddings()
-    # Локальные эмбеддинги (rubert-tiny2 через sentence-transformers/torch).
+    # Локальные эмбеддинги (Giga / rubert-tiny2 через sentence-transformers/torch).
     # Грузим СТРОГО из локальной папки, без обращения в сеть. HF_HUB_OFFLINE=1
     # уже выставлен в config.py — дублируем здесь как страховку.
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    from langchain_huggingface import HuggingFaceEmbeddings
-    local_model = s.resolve_embedding_model()
-    return HuggingFaceEmbeddings(
-        model_name=local_model,
-        model_kwargs={"device": s.embed_device, "trust_remote_code": False},
-        encode_kwargs={"normalize_embeddings": s.embed_normalize},
-        cache_folder=str(pathlib.Path(local_model).parent),
-    )
+    return _load_local_embeddings(s)
 
 
 def _parse_extra_body(raw: str) -> dict:
@@ -217,6 +310,7 @@ class RAGEngine:
         self.client = chromadb.PersistentClient(path=self.settings.chroma_dir)
         self._lock = threading.Lock()
         self._watcher_running = False
+        self._query_cache = {}  # кэш вариантов запроса: вопрос -> [варианты]
         self._build()
 
     def _build_chain(self):
@@ -280,41 +374,96 @@ class RAGEngine:
         self.rag_chain = self._build_chain()
 
     # --- Гибридный ретривер: вектор + BM25, слияние через Reciprocal Rank Fusion ---
-    # Раскрытие синонимов/совершенного вида для русского юр-корпуса (без лемматизатора).
-    _EXPANSIONS = [
-        ("ответственн", "ответственность штраф наказание взыскание"),
-        ("штраф", "штраф взыскание наказание"),
-        ("расторг", "расторжение прекращение досрочно"),
-        ("недействител", "недействительность ничтожный оспоримый"),
-        ("собственн", "собственность владение имущество право"),
-        ("договор", "договор соглашение контракт"),
-        ("возмещ", "возмещение ущерб компенсация"),
-        ("убыт", "убытки ущерб возмещение"),
-        ("алимент", "алименты содержание"),
-        ("наслед", "наследование наследник завещание"),
-        ("труд", "труд работа работник работодатель"),
-        ("увольн", "увольнение расторжение труд"),
-        ("налог", "налог сбор пошлина"),
-        ("жил", "жилое помещение квартира жильё"),
-        ("аренд", "аренда наём имущество"),
-        ("пенс", "пенсия выплата"),
-        ("лиценз", "лицензия разрешение"),
-        ("административн", "административное правонарушение штраф"),
-        ("уголовн", "преступление наказание"),
-        ("защит", "защита прав гарантия"),
-        ("иск", "исковое заявление суд"),
-        ("суд", "суд судья иск"),
-        ("ипотек", "ипотека залог кредит"),
-        ("брак", "брак супруги развод"),
+    # --- Раскрытие синонимов/переформулировка для русского юр-корпуса ---
+    # Двунаправленные группы синонимов: если в запросе встречается любой «триггер»,
+    # к запросу добавляются «расширения» (обратная связь работает, т.к. триггерами
+    # выступают и разговорные, и юридические формы одного понятия, напр.
+    # зарплата <-> заработная плата).
+    _SYNONYM_GROUPS = [
+        (["зарплат", "заработн"], ["заработная плата", "оплата труда", "выплата заработной платы"]),
+        (["оплат труда"], ["заработная плата", "зарплата", "выплата заработной платы"]),
+        (["неустойк"], ["пени", "штраф", "штрафные санкции"]),
+        (["пени"], ["неустойка", "штраф"]),
+        (["штраф"], ["неустойка", "пени", "административный штраф"]),
+        (["увольн"], ["расторжение трудового договора", "сокращение численности"]),
+        (["сокращ"], ["увольнение", "расторжение трудового договора"]),
+        (["декрет", "беременн"], ["отпуск по беременности и родам"]),
+        (["больничн"], ["лист нетрудоспособности", "пособие по временной нетрудоспособности"]),
+        (["ипотек"], ["залог недвижимости", "жилищный кредит", "ипотечный кредит"]),
+        (["алимент"], ["содержание ребёнка", "содержание детей"]),
+        (["наслед"], ["завещание", "наследник", "вступление в наследство"]),
+        (["жил", "квартир"], ["жилое помещение", "жилищный кодекс"]),
+        (["аренд"], ["договор аренды", "наём имущества"]),
+        (["налог"], ["налоговый кодекс", "налоговая декларация"]),
+        (["трудов"], ["трудовой договор", "трудовые отношения"]),
+        (["развод", "брак расторг"], ["расторжение брака", "семейный кодекс"]),
+        (["договор"], ["соглашение", "контракт"]),
+        (["возмещ"], ["возмещение ущерба", "компенсация"]),
+        (["убыт"], ["убытки", "возмещение убытков"]),
+        (["иск"], ["исковое заявление", "судебный иск"]),
+        (["суд"], ["судебное разбирательство", "исковое заявление"]),
+        (["защит"], ["защита прав", "охрана прав"]),
+        (["лиценз"], ["лицензия", "разрешение"]),
+        (["административн"], ["административное правонарушение", "административный штраф"]),
+        (["уголовн"], ["преступление", "уголовная ответственность"]),
+        (["собственн"], ["собственность", "право собственности", "имущество"]),
+        (["расторг"], ["расторжение", "прекращение договора"]),
+        (["недействител"], ["недействительность", "ничтожная сделка", "оспоримая сделка"]),
+        (["ответственн"], ["ответственность", "штраф", "наказание", "взыскание"]),
     ]
 
     def _expand_query(self, question: str) -> str:
+        """Добавляет к запросу юридические синонимы из _SYNONYM_GROUPS (двунаправленно)."""
         q = question.lower()
         extra = []
-        for key, add in self._EXPANSIONS:
-            if key in q and add not in extra:
-                extra.append(add)
+        for triggers, expansions in self._SYNONYM_GROUPS:
+            if any(trig in q for trig in triggers):
+                for exp in expansions:
+                    if exp not in extra and exp not in q:
+                        extra.append(exp)
         return (question + " " + " ".join(extra)).strip()
+
+    def _rewrite_query(self, question: str) -> str:
+        """LLM-переформулировка разговорного вопроса в юр. поисковый запрос (GigaChat).
+
+        При сбое возвращает исходный вопрос — грациозная деградация до синонимов/оригинала.
+        """
+        prompt = (
+            "Ты — помощник юридического поиска по российским кодексам (ТК, ГК, НК, СК, ЖК, "
+            "УК и др.). Переформулируй вопрос обычного человека в формальные юридические "
+            "термины и выдели ключевые понятия. Верни ТОЛЬКО поисковый запрос в одну строку, "
+            "без пояснений и без кавычек.\n\nВопрос: " + question
+        )
+        try:
+            out = self.llm.invoke(prompt)
+            text = (out.content if hasattr(out, "content") else str(out)).strip()
+            text = text.strip("\"' \n")  # отсекаем артефакты форматирования
+            return text or question
+        except Exception as e:
+            log.warning("LLM query rewrite не удался, используем исходный запрос: %s", e)
+            return question
+
+    def _prepare_query(self, question: str) -> list:
+        """Готовит варианты запроса: оригинал + LLM-переформулировка + синоним-расширения.
+
+        Результат кэшируется по тексту вопроса, чтобы не дёргать LLM повторно при
+        двойном вызове retrieve() (контекст и источники в рамках одного ask()).
+        """
+        cached = self._query_cache.get(question)
+        if cached is not None:
+            return cached
+        rewritten = self._rewrite_query(question)
+        variants = [question, rewritten, self._expand_query(question), self._expand_query(rewritten)]
+        seen, uniq = set(), []
+        for v in variants:
+            v = v.strip()
+            if v and v not in seen:
+                seen.add(v)
+                uniq.append(v)
+        if len(self._query_cache) > 128:  # защита от разрастания кэша между запросами
+            self._query_cache.clear()
+        self._query_cache[question] = uniq
+        return uniq
 
     def _keyword_search(self, question: str, k: int):
         q = self._vectorizer.transform([question])
@@ -330,27 +479,74 @@ class RAGEngine:
                 break
         return out
 
-    def _retrieve_hybrid(self, question: str, k: int):
-        if self._vectorizer is None:
-            return self.retriever.invoke(question)
+    # Порог косинусной дистанции Chroma: выше = не релевантно.
+    # Откалибровано под Giga-Embeddings-instruct-480M-0826 (1024-dim, norm=True):
+    # на замере 7 релевантных запросов best_dist = 0.88..1.25, пограничные юр-формулировки
+    # (закон о тишине 1.20, нарушение покоя 1.33) и 4 мусорных = 1.37..1.65.
+    # Порог 1.35: REL_max=1.2475 < 1.35 < пограничный 1.330 < NOISE_min=1.3751.
+    # Если детерминированно «отсекаются» нужные ответы — поднимите порог (напр. 1.4),
+    # если пролезает мусор — опустите (напр. 1.3).
+    _MAX_IRRELEVANT_DISTANCE = 1.35
+
+    def _retrieve_hybrid_multi(self, queries: list, k: int):
+        """Гибридный поиск по НЕСКОЛЬКИМ вариантам запроса + RRF-мерж.
+
+        Для каждого варианта (оригинал / LLM-переформулировка / синоним-расширения)
+        считаем векторный и BM25-поиск, затем сливаем кандидатов через Reciprocal
+        Rank Fusion (оригинальный запрос чуть перевешивает).
+
+        Фильтр ложных источников (детерминированный, не зависит от формулировки LLM):
+          1) ни один вариант не дал BM25-попаданий — в корпусе нет ключевых терминов;
+          2) самый релевантный кандидат всё же слабо похож (векторная дистанция выше
+             порога `_MAX_IRRELEVANT_DISTANCE`) — значит контекста нет, показывать нечего.
+        В обоих случаях возвращаем пусто → LLM честно «нет ответа», без ложных цитат.
+        """
         n = len(self._chunk_texts)
-        eq = self._expand_query(question)
-        vs_docs = self.vectorstore.similarity_search(eq, k=min(20, n))
-        kw_docs = self._keyword_search(eq, k=min(20, n))
+        top_n = min(20, n)
+        if self._vectorizer is None:
+            # Нет BM25-индекса — только векторный поиск по первому варианту
+            return self.vectorstore.similarity_search(queries[0], k=top_n)[:k]
 
         fused = {}
-        vs_w, kw_w = 1.0, 2.5  # BM25 чуть весомее — ловит морфологию в русском
-        for rank, d in enumerate(vs_docs):
-            fused[d.page_content] = fused.get(d.page_content, 0.0) + vs_w / (rank + 1 + 60)
-        for rank, d in enumerate(kw_docs):
-            fused[d.page_content] = fused.get(d.page_content, 0.0) + kw_w / (rank + 1 + 60)
-
         all_docs = {}
-        for d in vs_docs + kw_docs:
-            c = d.page_content
-            # сохраняем метаданные: при совпадении текста отдаём версию с метаданными
-            if c not in all_docs or not all_docs[c].metadata:
-                all_docs[c] = d
+        best_dist = {}  # page_content -> лучшая (минимальная) векторная дистанция по вариантам
+        kw_hits = 0
+        vs_w, kw_w = 1.0, 2.5  # BM25 чуть весомее — ловит морфологию в русском
+        for qi, q in enumerate(queries):
+            variant_boost = 1.0 + (0.3 if qi == 0 else 0.0)
+            vs_res = self.vectorstore.similarity_search_with_score(q, k=top_n)
+            kw_docs = self._keyword_search(q, k=top_n)
+            kw_hits += len(kw_docs)
+            for rank, (d, dist) in enumerate(vs_res):
+                c = d.page_content
+                fused[c] = fused.get(c, 0.0) + vs_w * variant_boost / (rank + 1 + 60)
+                if c not in best_dist or dist < best_dist[c]:
+                    best_dist[c] = dist
+            for rank, d in enumerate(kw_docs):
+                c = d.page_content
+                fused[c] = fused.get(c, 0.0) + kw_w * variant_boost / (rank + 1 + 60)
+            for d, _ in vs_res:
+                c = d.page_content
+                # сохраняем метаданные: при совпадении текста отдаём версию с метаданными
+                if c not in all_docs or not all_docs[c].metadata:
+                    all_docs[c] = d
+            for d in kw_docs:
+                c = d.page_content
+                if c not in all_docs or not all_docs[c].metadata:
+                    all_docs[c] = d
+
+        # Фильтр ложных источников (детерминированный):
+        if kw_hits == 0:
+            return []
+        if best_dist:
+            # Глобальный минимум векторной дистанции по ВСЕМ кандидатам: если даже
+            # ближайший чанк слабо похож (выше порога) — релевантного контекста нет.
+            # Проверяем глобальный минимум, а не верхний по RRF: иначе BM25-буст от
+            # общих слов (напр. «закон») протаскивает мусорный, но «близкий по BM25» документ.
+            global_min = min(best_dist.values())
+            if global_min > self._MAX_IRRELEVANT_DISTANCE:
+                return []
+
         ranked = sorted(fused.keys(), key=lambda t: fused[t], reverse=True)
         return [all_docs[t] for t in ranked[:k]]
 
@@ -372,9 +568,40 @@ class RAGEngine:
             )
         raise last_error
 
+    @staticmethod
+    def _is_no_answer(answer: str) -> bool:
+        """True, если модель честно сообщила, что в документах нет ответа.
+
+        GigaChat парафразирует каноническую фразу, поэтому ловим несколько
+        формулировок («нет ответа» / «нет информации» / «не содержится» и т.п.),
+        чтобы не показывать ложные источники рядом с «нет ответа».
+        """
+        a = (answer or "").strip().lower()
+        if not a:
+            return True
+        if a.startswith("в предоставленн"):
+            return True
+        negatives = [
+            "нет ответа", "нет прямого ответа", "нет информации", "нет данных",
+            "нет сведений", "не содержится", "не нашлось", "не удалось найти",
+            "отсутствует информация", "в контексте нет",
+        ]
+        if any(ph in a for ph in negatives):
+            return True
+        # «нет» + одно из ключевых слов поблизости (информация/ответ/сведения/данные…)
+        if "нет" in a and any(k in a for k in ["информаци", "ответ", "сведени", "данн", "упоминан", "материал"]):
+            return True
+        return False
+
     def ask_with_sources(self, question: str, max_retries: int = 3):
-        """Возвращает (ответ, список источников) для цитирования в UI."""
+        """Возвращает (ответ, список источников) для цитирования в UI.
+
+        Если модель не нашла ответ в контексте, источники не возвращаются —
+        иначе UI показывал бы нерелевантные «ложные источники» (см. грабли в NOTES).
+        """
         answer = self.ask(question, max_retries=max_retries)
+        if self._is_no_answer(answer):
+            return answer, []
         docs = self.retrieve(question)
         sources = [
             {
@@ -388,7 +615,8 @@ class RAGEngine:
 
     def retrieve(self, question: str, k: int | None = None):
         k = k or self.settings.retriever_k
-        return self._retrieve_hybrid(question, k)
+        queries = self._prepare_query(question)
+        return self._retrieve_hybrid_multi(queries, k)
 
     def contexts_for(self, question: str, k: int | None = None) -> list[str]:
         return [d.page_content for d in self.retrieve(question, k)]
