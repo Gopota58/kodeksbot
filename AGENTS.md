@@ -11,7 +11,10 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
 - `app.py` — FastAPI: `/ask` (+источники), `/ingest`, `/upload`, `/documents`, `/health`, CORS, статикa
 - `config.py` — настройки из `.env` (pydantic-settings): LLM / эмбеддинги / Chroma
 - `ingest.py` — CLI: `python ingest.py` (строит индекс Chroma из data/docs/)
-- `static/` — веб-чат (vanilla JS); красивый UI обсуждается отдельно
+- `static/index.html` — веб-чат (один файл, vanilla JS/CSS, без сборщиков): тёмный «юридический»
+  дизайн, обязательное цитирование источников (карточки кодекс/стр./фрагмент), drag&drop загрузка
+  (`/upload`), список документов (`/documents`), переиндексация (`/ingest`), статус сервера (`/health`).
+  XSS-safe рендер (`textContent`/`esc()`), история в `localStorage`.
 - `bot.py` / `desktop_client.py` — Telegram-бот / десктоп (опц., из фреймворка)
 - `data/docs/` — корпус: 26 кодексов РФ (ГК×4, НК×2, ТК, УК, процессуальные, отраслевые, КоАП, Конституция). Состав — `data/docs/README.md`.
 - `chroma_db/` — векторная БД Chroma (persistent)
