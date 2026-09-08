@@ -1,0 +1,16 @@
+venv/
+models/
+chroma_db/
+.env
+dist/
+build/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+hh_ai/
+uvicorn_out.log
+uvicorn_err.log
+eval_out.log
+eval_err.log
+evaluation/results.json

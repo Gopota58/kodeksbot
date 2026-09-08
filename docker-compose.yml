@@ -1,0 +1,32 @@
+# Полностью локальный деплой: приложение + LLM-сервер (Ollama).
+# 1) docker compose up --build
+# 2) docker compose exec ollama ollama pull qwen2.5:7b
+# 3) открыть http://localhost:8000/
+#
+# Альтернатива: вместо Ollama использовать LM Studio на хосте —
+# тогда в app задайте LLM_BASE_URL=http://host.docker.internal:1234/v1
+# и не поднимайте сервис ollama.
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_PROVIDER=local
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=qwen2.5:7b
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # модель не входит в образ — подтянется одной командой после старта
+
+volumes:
+  ollama_data:

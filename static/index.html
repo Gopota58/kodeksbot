@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG-бот — чат с документами</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f0f2f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 1.8rem;
+            color: #1a1a2e;
+            text-align: center;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        .chat-container {
+            flex: 1;
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: #fafafa;
+        }
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            animation: fadeIn 0.3s ease;
+        }
+        .message.user {
+            align-self: flex-end;
+            background: #007aff;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .message.bot {
+            align-self: flex-start;
+            background: #e9ecef;
+            color: #1a1a2e;
+            border-bottom-left-radius: 4px;
+        }
+        .message .copy-btn {
+            background: none;
+            border: none;
+            color: inherit;
+            opacity: 0.4;
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin-left: 8px;
+            transition: opacity 0.2s;
+        }
+        .message .copy-btn:hover {
+            opacity: 1;
+        }
+        .message .timestamp {
+            font-size: 0.65rem;
+            opacity: 0.5;
+            margin-top: 4px;
+            display: block;
+        }
+        .message.bot .timestamp {
+            color: #555;
+        }
+        .message.user .timestamp {
+            color: rgba(255,255,255,0.7);
+        }
+        .typing {
+            align-self: flex-start;
+            background: #e9ecef;
+            padding: 12px 16px;
+            border-radius: 18px;
+            border-bottom-left-radius: 4px;
+            color: #888;
+            font-style: italic;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+        .input-area {
+            display: flex;
+            gap: 10px;
+            padding: 16px 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #ddd;
+            border-radius: 24px;
+            font-size: 1rem;
+            outline: none;
+            transition: border 0.2s;
+        }
+        .input-area input:focus {
+            border-color: #007aff;
+        }
+        .input-area button {
+            padding: 12px 24px;
+            background: #007aff;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .input-area button:hover {
+            background: #005bb5;
+        }
+        .input-area button:disabled {
+            background: #aaa;
+            cursor: not-allowed;
+        }
+        .clear-btn {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 0.9rem;
+            padding: 8px 12px;
+            align-self: center;
+        }
+        .clear-btn:hover {
+            color: #d32f2f;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 600px) {
+            body { padding: 10px; }
+            .message { max-width: 90%; }
+            .input-area { flex-wrap: wrap; }
+            .input-area input { flex: 1 1 100%; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>
+        📄 RAG-бот
+        <button class="clear-btn" onclick="clearHistory()">🗑️ Очистить</button>
+    </h1>
+
+    <div class="chat-container">
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="input-area">
+            <input type="text" id="userInput" placeholder="Спросите что-нибудь..." autofocus>
+            <button id="sendBtn">Отправить</button>
+        </div>
+    </div>
+
+    <script>
+        // ============================
+        // 1. Элементы DOM
+        // ============================
+        const messagesContainer = document.getElementById('chatMessages');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        // Ключ API — должен совпадать с API_KEY в .env (см. README)
+        const API_KEY = '88888888';
+
+        // ============================
+        // 2. Управление историей (localStorage)
+        // ============================
+        const STORAGE_KEY = 'chat_history_rag';
+
+        function loadHistory() {
+            try {
+                const stored = localStorage.getItem(STORAGE_KEY);
+                return stored ? JSON.parse(stored) : [];
+            } catch {
+                return [];
+            }
+        }
+
+        function saveHistory(history) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+        }
+
+        let chatHistory = loadHistory();
+
+        // ============================
+        // 3. Рендеринг сообщений
+        // ============================
+        function renderMessages() {
+            messagesContainer.innerHTML = '';
+            chatHistory.forEach((msg, index) => {
+                const div = document.createElement('div');
+                div.className = `message ${msg.role}`;
+                div.innerHTML = `
+                    <span>${msg.text}</span>
+                    <span class="timestamp">${msg.time || ''}</span>
+                    ${msg.role === 'bot' ? `<button class="copy-btn" onclick="copyText('${encodeURIComponent(msg.text)}')">📋</button>` : ''}
+                `;
+                messagesContainer.appendChild(div);
+            });
+            scrollToBottom();
+        }
+
+        function scrollToBottom() {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // ============================
+        // 4. Добавление сообщения
+        // ============================
+        function addMessage(role, text) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            chatHistory.push({ role, text, time: timeStr });
+            saveHistory(chatHistory);
+            renderMessages();
+        }
+
+        // ============================
+        // 5. Очистка истории
+        // ============================
+        function clearHistory() {
+            if (confirm('Удалить всю историю диалога?')) {
+                chatHistory = [];
+                saveHistory(chatHistory);
+                renderMessages();
+            }
+        }
+
+        // ============================
+        // 6. Копирование текста
+        // ============================
+        function copyText(encodedText) {
+            const text = decodeURIComponent(encodedText);
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                btn.textContent = '✅';
+                setTimeout(() => btn.textContent = '📋', 1500);
+            }).catch(() => {
+                alert('Не удалось скопировать текст');
+            });
+        }
+
+        // ============================
+        // 7. Отправка запроса (с API-ключом)
+        // ============================
+        async function sendQuestion() {
+            const question = userInput.value.trim();
+            if (!question) return;
+
+            addMessage('user', question);
+            userInput.value = '';
+            userInput.focus();
+            sendBtn.disabled = true;
+
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'typing';
+            typingDiv.textContent = '⏳ Думаю...';
+            messagesContainer.appendChild(typingDiv);
+            scrollToBottom();
+
+            try {
+                const response = await fetch('/ask', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': API_KEY
+                    },
+                    body: JSON.stringify({ question })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Ошибка сервера: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const answer = data.answer || 'Нет ответа.';
+
+                messagesContainer.removeChild(typingDiv);
+                addMessage('bot', answer);
+
+            } catch (error) {
+                if (typingDiv.parentNode) messagesContainer.removeChild(typingDiv);
+                addMessage('bot', `❌ Ошибка: ${error.message}`);
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        // ============================
+        // 8. Обработчики событий
+        // ============================
+        sendBtn.addEventListener('click', sendQuestion);
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendQuestion();
+            }
+        });
+
+        // ============================
+        // 9. Загрузка при старте
+        // ============================
+        renderMessages();
+        userInput.focus();
+    </script>
+</body>
+</html>

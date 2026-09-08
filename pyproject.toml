@@ -1,0 +1,30 @@
+[project]
+name = "kotobaza-rag"
+version = "1.0.0"
+description = "Локальный offline-first RAG-движок (FastAPI + LangChain + Chroma) с Telegram-ботом, веб-чатом и обходом блокировок."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Gopota58" }]
+keywords = ["rag", "llm", "fastapi", "langchain", "chromadb", "telegram-bot", "offline-first", "local-llm"]
+
+# Зависимости зафиксированы в requirements.txt (pip install -r requirements.txt).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["venv", "build", "dist", "__pycache__", "chroma_db", "models"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# E501 — длинные строки докстрингов/промптов; B008 — FastAPI Depends() в дефолтах аргументов.
+ignore = ["E501", "B008"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+
+# Secrets
+.env
+
+# Agent / local working notes (не для публичного репо — содержит токен бота)
+MEMORY.md
+_check.py
+
+# Локальные генераторы шуточного корпуса (в портфолио — серьёзный docs/)
+rewrite_cats.py
+gender_fix.py
+
+# Generated / large data (recreate locally)
+chroma_db/
+models/
+evaluation/results.json
+
+# Unrelated user data (keep out of the portfolio repo)
+hh_ai/
+
+# Intermediate working copy of the corpus (docs/ + docs_backup/ are enough)
+docs_pass1/
+
+# Build artifacts
+dist/
+build/
+
+# Runtime logs and pid-files
+logs/
+*.log
+
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Corpus (large binary PDF/DOCX — recreate locally / store separately)
+data/docs/

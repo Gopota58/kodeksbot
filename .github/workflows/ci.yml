@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # разработка вёлась на 3.14; CI — на 3.12 (шире покрытие wheels)
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint (ruff)
+        run: ruff check .
+        continue-on-error: true    # линтер — рекомендация; зелёный статус определяет pytest
+
+      - name: Tests (pytest)
+        run: pytest -q
