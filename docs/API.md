@@ -2,15 +2,16 @@
 
 ## Переменные окружения (.env)
 ```
-API_KEY=88888888
+API_KEY=88888888                         # смените в проде!
 LLM_PROVIDER=gigachat
 LLM_API_KEY=<Authorization key из developers.sber.ru>
 LLM_MODEL=GigaChat-2
 GIGACHAT_BASE_URL=https://api.giga.chat/v1
 GIGACHAT_VERIFY_SSL_CERTS=true
-# GIGACHAT_CA_BUNDLE_FILE=C:\...\russian_trusted_root_ca.crt
+# GIGACHAT_CA_BUNDLE_FILE=C:\...\russian_trusted_root_ca.crt  (нужен на Windows/в облаке)
 EMBED_PROVIDER=local
-EMBEDDING_MODEL_ID=cointegrated/rubert-tiny2
+EMBEDDING_MODEL_ID=Giga-Embeddings-instruct-480M-0826
+EMBED_DEVICE=cpu                          # cuda локально / cpu в облаке
 ALLOWED_ORIGINS=*
 ```
 Шаблон — `.env.example`. Реальный `.env` не коммитится.
@@ -35,7 +36,9 @@ ALLOWED_ORIGINS=*
 - Не используйте reasoning-модели без отключения thinking — вернут пустой ответ.
 
 ## Эмбеддинги (`rag/engine.py` → `build_embeddings`)
-- `local` (по умолчанию): HuggingFace `cointegrated/rubert-tiny2` (русскоязычная, тянется из HF при 1-м запуске).
-  Для максимального качества — `ai-forever/sbert_large_nlu_ru`.
+- `local` (по умолчанию): локальная русскоязычная `Giga-Embeddings-instruct-480M-0826` (Сбер,
+  Qwen3Bidirectional, 1024-dim, bf16, SentenceTransformer с `trust_remote_code`), загружается
+  **строго офлайн** (`HF_HUB_OFFLINE=1`). Instruct-префикс `query`/`document`.
+  Для максимального качества возможна `ai-forever/sbert_large_nlu_ru` (тяжелее, качать вручную).
 - `api`: OpenAI-совместимый endpoint (напр. nomic-embed-text в LM Studio).
 - Смена модели ⇒ пересборка индекса (`python ingest.py`).
