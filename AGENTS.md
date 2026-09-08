@@ -38,8 +38,15 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
   (`HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` в `config.py`). Instruct-промпты: query-префикс
   `Instruct: Given a query, retrieve relevant passages\nQuery: ` (документы без префикса).
   Смена модели ⇒ пересборка индекса.
-- Эмбеддинги считаются на **GPU** (`embed_device="cuda"` в `config.py`); для reindex на GPU нужна
-  CUDA-сборка torch (`torch==2.11.0+cu128`). VRAM ~3.5 ГБ под Giga-480M.
+- Эмбеддинги считаются на **GPU локально** (`embed_device` берётся из `EMBED_DEVICE`, по умолчанию
+  `"cuda"`; в Docker-деплое `EMBED_DEVICE=cpu`). Для reindex на GPU нужна CUDA-сборка torch
+  (`torch==2.11.0+cu128`). VRAM ~3.5 ГБ под Giga-480M.
+- **Деплой в Yandex Cloud (Docker, CPU):** `Dockerfile` собирается с `python:3.12-slim` (не 3.11 —
+  замороженный `requirements.txt` под 3.12, `numpy==2.5.2` требует ≥3.12). `requirements.txt` должен быть
+  **строго в UTF-8** (кириллические комментарии в CP1251 роняют `pip install`). torch запинен как
+  `torch==2.14.0+cpu` + `--extra-index-url https://download.pytorch.org/whl/cpu` (иначе тянется CUDA
+  ~3 ГБ, что убивает 4 ГБ RAM/30 ГБ диска ВМ). GigaChat из ВМ работает (RF-CA нативный, либо
+  `GIGACHAT_CA_BUNDLE_FILE=/app/certs/Russian_Trusted_Root_CA.pem`).
 - Порог иррелевантности `_MAX_IRRELEVANT_DISTANCE = 1.35` в `rag/engine.py` (косинусная дистанция
   Chroma: выше — не релевантно; откалибровано под Giga: REL≈0.88..1.33, NOISE≈1.37..1.65).
   Старый порог 0.60 (для rubert-tiny2) не годится — отсекал все релевантные запросы.

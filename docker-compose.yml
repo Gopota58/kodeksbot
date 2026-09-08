@@ -1,32 +1,29 @@
-# Полностью локальный деплой: приложение + LLM-сервер (Ollama).
-# 1) docker compose up --build
-# 2) docker compose exec ollama ollama pull qwen2.5:7b
-# 3) открыть http://localhost:8000/
+# Деплой КодексБот: FastAPI + локальные Giga-эмбеддинги + GigaChat (внешний API Сбера).
+# Артефакты (модель, индекс, корпус, сертификаты, .env) монтируются как volumes,
+# НЕ запекаются в образ (см. .dockerignore: models/, chroma_db/, .env исключены).
 #
-# Альтернатива: вместо Ollama использовать LM Studio на хосте —
-# тогда в app задайте LLM_BASE_URL=http://host.docker.internal:1234/v1
-# и не поднимайте сервис ollama.
+# 1) docker compose up -d --build
+# 2) открыть http://<VM-IP>:8000/
 
 services:
   app:
     build: .
+    container_name: kodeksbot
     ports:
       - "8000:8000"
     environment:
-      - LLM_PROVIDER=local
-      - LLM_BASE_URL=http://ollama:11434/v1
-      - LLM_API_KEY=ollama
-      - LLM_MODEL=qwen2.5:7b
-    depends_on:
-      - ollama
-
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+      # watcher отключён: в облаке на CPU reindex долгий; индекс переносим готовым
+      - RAG_DISABLE_WATCHER=1
+      # CPU в облаке (на GPU-хосте уберите строку или EMBED_DEVICE=cuda)
+      - EMBED_DEVICE=cpu
+      # GigaChat через внешний API (не Ollama)
+      - LLM_PROVIDER=gigachat
+      # Linux-путь к российскому CA (в .env прописан Windows-путь — переопределяем)
+      - GIGACHAT_CA_BUNDLE_FILE=/app/certs/Russian_Trusted_Root_CA.pem
     volumes:
-      - ollama_data:/root/.ollama
-    # модель не входит в образ — подтянется одной командой после старта
-
-volumes:
-  ollama_data:
+      - ./models:/app/models
+      - ./data/docs:/app/data/docs
+      - ./chroma_db:/app/chroma_db
+      - ./certs:/app/certs
+      - ./.env:/app/.env
+    restart: unless-stopped

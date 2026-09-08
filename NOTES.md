@@ -1,3 +1,39 @@
+## 2026-09-08 (продолжение 3) — Деплой КодексБот в Yandex Cloud (Docker, CPU, бесплатный грант)
+
+### Сделано (Done)
+- Полный деплой рабочего стека на ВМ Yandex Cloud (Ubuntu 24.04, 2 vCPU / 4 ГБ / 30 ГБ, публичный IP
+  `89.169.185.183`, OS Login `gopota58`). Docker 29.8 + Compose v5.5.1 установлены; проект перенесён по
+  SSH (готовые `models/` 1.3 ГБ + `chroma_db/` 603 МБ + `data/docs/` 136 МБ; watcher выключен).
+- `Dockerfile`: база `python:3.12-slim` (была 3.11 — падала на `numpy==2.5.2`, требует ≥3.12).
+- `requirements.txt`: перекодирован в **UTF-8** (был Windows-1251 → `pip install` падал `UnicodeDecodeError`).
+  torch запинен `torch==2.14.0+cpu` + `--extra-index-url https://download.pytorch.org/whl/cpu`
+  (иначе тянул CUDA ~3 ГБ → не влезает в 4 ГБ RAM/30 ГБ диска).
+- `config.py`: `embed_device` теперь `os.getenv("EMBED_DEVICE","cuda")` (в compose `EMBED_DEVICE=cpu`).
+- Контейнер `kodeksbot` **Up**, `/health` → `{"status":"ok"}` (200), веб-UI отдаётся
+  (`⚖️ КодексБот — юридический RAG-ассистент`). End-to-end `/ask` на CPU проверен:
+  «зарплата при увольнении» → ст. 140 ТК РФ; «долг по кредиту» → ст. 812/813 ГК РФ (8 источников).
+- GigaChat из ВМ работает (SSL через `GIGACHAT_CA_BUNDLE_FILE=/app/certs/Russian_Trusted_Root_CA.pem`).
+
+### Грабли
+- **Кодировка requirements.txt**: кириллица из `Add-Content -Encoding Default` пишется в CP1251 → pip
+  читает как UTF-8 → `UnicodeDecodeError`. Лечится перекодировкой в UTF-8.
+- **Python 3.11 vs 3.12**: замороженный `requirements.txt` (numpy 2.5.2 и др.) собран под 3.12 → на
+  3.11-slim `pip` не находит версии → билд падает. База образа должна быть `python:3.12-slim`.
+- **CUDA-torch на CPU-ВМ**: незапиненный `torch` в Linux тянет CUDA-колёса (~3 ГБ) → OOM/диск. Всегда
+  пинить `torch==<ver>+cpu` + PyTorch CPU-индекс для облачного CPU-деплоя.
+- **Внешний доступ**: с моего места `http://89.169.185.183:8000` → `HTTP 000`, но с самой ВМ её
+  публичный IP отвечает `200`. Значит, в группе безопасности Yandex TCP 8000 открыт не для всех
+  source-IP. Пользователю: открыть браузер; если не грузится — добавить в SG правило TCP 8000 со своего
+  IP (или 0.0.0.0/0).
+
+### Следующие шаги
+- (опц.) В консоли Yandex открыть TCP 8000 в группе безопасности (для доступа из браузера).
+- (опц.) `sudo systemctl enable docker` на ВМ — автостарт контейнера после перезагрузки.
+- (опц.) Сменить простой API-ключ `88888888` в `.env` на ВМ.
+- (опц.) Обновить `docs/DEPLOY.md` под итоговую процедуру (3.12 + CPU-torch + UTF-8).
+
+---
+
 ## 2026-09-08 (продолжение 2) — Интеграция Giga-Embeddings-instruct-480M-0826 + GPU-реиндексация + GitHub
 
 ### Сделано (Done)

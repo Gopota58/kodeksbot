@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     embedding_model_id: str = "Giga-Embeddings-instruct-480M-0826"
 
     # --- Параметры эмбеддингов ---
-    embed_device: str = "cuda"   # RTX 4060 (8Gb); если CUDA-торч недоступна — "cpu"
+    embed_device: str = os.getenv("EMBED_DEVICE", "cuda")  # CPU в облаке: задайте EMBED_DEVICE=cpu
     embed_normalize: bool = True
     embed_trust_remote_code: bool = True  # Giga-модель требует кастомный код Сбера
 

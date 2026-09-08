@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+export RAG_DISABLE_WATCHER=1
+
 echo "[entrypoint] Подготовка модели эмбеддингов (при необходимости)..."
 python download_model.py || echo "[entrypoint][warn] авто-загрузка модели не выполнена (ожидается локальная модель или HF-auto-download)"
 
