@@ -142,6 +142,7 @@ python-telegram-bot==22.8
 torch==2.14.0+cpu  # CPU-only build for cloud deploy (no CUDA on VM)
 transformers
 sentence-transformers
+einops  # обязателен для кастомного кода jina-reranker-v2 (modeling_xlm_roberta.py: from einops import rearrange)
 langchain-huggingface
 pypdf
 python-docx

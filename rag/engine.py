@@ -90,6 +90,8 @@ ART_QUERY_RE2 = re.compile(r"(\d+)\s*ст", re.IGNORECASE)
 # (напр. «ск» ловило бы «скажи»).
 CODEX_HINTS = [
     ("уголовн", "Уголовный_кодекс"),
+    ("укрф", "Уголовный_кодекс"),
+    ("ук рф", "Уголовный_кодекс"),
     ("трудов", "Трудовой_кодекс"),
     ("семейн", "Семейный_кодекс"),
     ("граждан", "Гражданский_кодекс"),
@@ -370,19 +372,66 @@ class RAGEngine:
         self.settings = settings
         self.embeddings = embeddings or build_embeddings(self.settings)
         self.llm = llm or build_llm(self.settings)
-        # Reranker (опц., config.rerank_model): локальная sentence-transformer модель
-        # (напр. all-MiniLM-L6-v2), переранжирует кандидатов гибридного поиска по
-        # семантической близости запросу. Работает офлайн (модель уже в models/).
+        # Reranker (опц., config.rerank_model): локальная cross-encoder модель
+        # (напр. jina-reranker-v2-base-multilingual) — настоящий перекрёстный энкодер,
+        # оценивает релевантность пар (запрос, документ) совместным кодированием и
+        # выдаёт один скалярный score. Для слабых/bi-encoder моделей (MiniLM) есть
+        # фоллбэк на косинусную близость. Работает офлайн (модель уже в models/).
         # При сбое/отсутствии — self._rerank_model=None → reranker молча отключается.
         self._rerank_model = None
+        self._rerank_tok = None
+        self._rerank_is_cross = False
         rm = getattr(self.settings, "rerank_model", "") or ""
-        if _HAVE_ST and rm:
-            try:
-                self._rerank_model = _STransformer(str(rm), device=self.settings.embed_device)
-                log.info("Reranker загружен: %s", rm)
-            except Exception as e:
-                log.warning("Reranker не загрузился (%s), отключаем: %s", rm, e)
-                self._rerank_model = None
+        if rm:
+            rm_path = str(rm)
+            # SentenceTransformer-формат (bi-encoder, напр. all-MiniLM-L6-v2) имеет modules.json;
+            # cross-encoder (jina/bge) — чистый transformers-чекпоинт без modules.json.
+            # Грузим bi-encoder через SentenceTransformer: иначе MiniLM «успешно» загрузился бы
+            # как классификатор и выдавал бы мусорные score вместо косинусной близости.
+            is_st_format = os.path.isfile(os.path.join(rm_path, "modules.json"))
+            if is_st_format and _HAVE_ST:
+                try:
+                    self._rerank_model = _STransformer(rm_path, device=self.settings.embed_device)
+                    self._rerank_is_cross = False
+                    log.info("Reranker (bi-encoder/SentenceTransformer) загружен: %s", rm)
+                except Exception as e:
+                    log.warning("Reranker (bi-encoder) не загрузился (%s), отключаем: %s", rm, e)
+                    self._rerank_model = None
+            else:
+                try:
+                    import torch as _torch  # noqa: F401  (нужен позже в _rerank)
+                    from transformers import (
+                        AutoConfig,
+                        AutoModelForSequenceClassification,
+                        AutoTokenizer,
+                    )
+                    rcfg = AutoConfig.from_pretrained(rm_path, trust_remote_code=True)
+                    try:  # на CPU flash-attn не нужен и может отсутствовать — принудительно выключаем
+                        rcfg.use_flash_attn = False
+                    except Exception:
+                        pass
+                    self._rerank_tok = AutoTokenizer.from_pretrained(rm_path, trust_remote_code=True)
+                    self._rerank_model = AutoModelForSequenceClassification.from_pretrained(
+                        rm_path,
+                        config=rcfg,
+                        torch_dtype="auto",
+                        trust_remote_code=True,
+                    )
+                    self._rerank_model.eval()
+                    self._rerank_is_cross = True
+                    log.info("Reranker (cross-encoder) загружен: %s", rm)
+                except Exception as e:
+                    log.warning("CrossEncoder не загрузился (%s): %s", rm, e)
+                    if _HAVE_ST:  # фоллбэк на bi-encoder (MiniLM и т.п.)
+                        try:
+                            self._rerank_model = _STransformer(rm_path, device=self.settings.embed_device)
+                            self._rerank_is_cross = False
+                            log.info("Reranker (bi-encoder) загружен: %s", rm)
+                        except Exception as e2:
+                            log.warning("Reranker не загрузился (%s), отключаем: %s", rm, e2)
+                            self._rerank_model = None
+                    else:
+                        self._rerank_model = None
         self.collection_name = self.settings.collection_name
         self.client = chromadb.PersistentClient(path=self.settings.chroma_dir)
         self._lock = threading.Lock()
@@ -957,24 +1006,41 @@ class RAGEngine:
         return None
 
     def _rerank(self, query: str, docs: list, top_n: int) -> list:
-        """Переранжирование кандидатов reranker-моделью (MiniLM) по близости к запросу.
+        """Переранжирование кандидатов reranker-моделью по релевантности запросу.
 
-        Берём больше кандидатов из гибридного поиска, затем упорядочиваем их по
-        косинусной близости эмбеддингов reranker-модели к запросу. Это поднимает
-        действительно релевантный чанк (напр. нужную статью кодекса) наверх контекста,
-        что снижает шанс ложно-отрицательного ответа LLM. Если reranker недоступен —
-        возвращаем исходных кандидатов (деградация без поломок).
+        Для настоящего cross-encoder (jina/bge): оцениваем пары (запрос, документ)
+        совместным кодированием и сортируем по выданному score. Для bi-encoder
+        (MiniLM) — косинусная близость эмбеддингов. Берём расширенный пул из
+        гибридного поиска (retrieve: cand_k=max(k*3,24)), затем поднимаем
+        действительно релевантный чанк наверх контекста — это снижает шанс
+        ложно-отрицательного ответа LLM. Если reranker недоступен — возвращаем
+        исходных кандидатов (деградация без поломок).
         """
         if self._rerank_model is None or not docs:
             return docs[:top_n]
         try:
-            q_emb = self._rerank_model.encode([query], normalize_embeddings=True)
-            d_emb = self._rerank_model.encode(
-                [d.page_content for d in docs], normalize_embeddings=True
-            )
-            sims = (d_emb @ q_emb[0]).tolist()
-            order = sorted(range(len(docs)), key=lambda i: sims[i], reverse=True)
-            return [docs[i] for i in order[:top_n]]
+            if self._rerank_is_cross and self._rerank_tok is not None:
+                import torch as _torch
+                pairs = [[query, d.page_content] for d in docs]
+                enc = self._rerank_tok(
+                    pairs,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt",
+                    max_length=512,
+                )
+                with _torch.no_grad():
+                    scores = self._rerank_model(**enc).logits.view(-1).float()
+                order = sorted(range(len(docs)), key=lambda i: float(scores[i]), reverse=True)
+                return [docs[i] for i in order[:top_n]]
+            else:  # bi-encoder (MiniLM): косинусная близость
+                q_emb = self._rerank_model.encode([query], normalize_embeddings=True)
+                d_emb = self._rerank_model.encode(
+                    [d.page_content for d in docs], normalize_embeddings=True
+                )
+                sims = (d_emb @ q_emb[0]).tolist()
+                order = sorted(range(len(docs)), key=lambda i: sims[i], reverse=True)
+                return [docs[i] for i in order[:top_n]]
         except Exception as e:
             log.warning("Rerank не удался, возвращаем исходный порядок: %s", e)
             return docs[:top_n]

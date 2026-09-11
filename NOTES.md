@@ -1,42 +1,69 @@
-## 2026-09-11 — Reranker (MiniLM, офлайн) + Handoff
+## 2026-09-11 — Reranker: MiniLM (быстро, как раньше) + детект статьи + HyDE off
 
-### Сделано (Done)
-- Реализован **Reranker поверх гибридной выдачи** (`rag/engine.py` + `config.py`):
-  - импорт `sentence_transformers` с защитой (если недоступен — rerank выключается, fallback на исходный RRF-порядок);
-  - `_rerank(query, docs, top_n)`: эмбеддинги запроса и кандидатов через локальную
-    `all-MiniLM-L6-v2` (путь `rerank_model` в config, по умолчанию `models/all-MiniLM-L6-v2`),
-    ранжирование по cosine-similarity, возврат топ-N;
-  - в `_retrieve_hybrid_multi` гибридная RRF-выдача (raw+HyDE+rewrite+синонимы, k=18) пропускается
-    через `_rerank` до отдачи `k` документов LLM;
-  - `config.py`: добавлены `rerank_model` и `enable_rerank: bool = True`; грациозный откат при
-    сбое загрузки/импорта (warning + возврат исходного порядка).
-- На ВМ обнаружено: локальная `models/all-MiniLM-L6-v2` УЖЕ есть (sentence-transformers в requirements),
-  офлайн-ренейнкер работает БЕЗ скачивания (настоящий cross-encoder качать нельзя — HF CDN заблок).
+### Хроника (Done)
+- Пробовали настоящий cross-encoder **jina-reranker-v2-base-multilingual** (278M,
+  `XLMRobertaForSequenceClassification`, мультиязычный, CC-BY-NC-4.0 — некоммерческое,
+  пользователь согласовал). Скачан в `E:\Project\models\jina-reranker-v2-base-multilingual` и залит
+  на ВМ `~/kodeksbot/models/` (bind-mount). Для загрузки запатчен кастомный `embedding.py`
+  (локальная копия удалённого в transformers `create_position_ids_from_input_ids`; иначе
+  `cannot import name ...` при старте). Модель **оставлена на диске ВМ** — можно вернуть.
+- **jina на CPU оказалась слишком медленной**: ~2 минуты на запрос (278M переоценивают пул из 24
+  кандидатов). Пользователь потребовал «быстро как раньше» → **reranker возвращён на `all-MiniLM-L6-v2`**
+  (22M, bi-encoder, косинус). Скорость вернулась (~18–26с/запрос, из которых ~20с — сам GigaChat).
+- `rag/engine.py` (загрузчик reranker универсален):
+  - детект формата по `modules.json`: SentenceTransformer-модель (MiniLM) грузится через
+    `SentenceTransformer` как bi-encoder (косинус); иначе грузится cross-encoder (jina) через
+    `AutoModelForSequenceClassification.from_pretrained(..., trust_remote_code=True, torch_dtype="auto")`
+    + `AutoTokenizer`, `use_flash_attn=False`. Без детекта MiniLM «успешно» грузился бы как
+    классификатор и выдавал мусорные score — теперь исключено.
+  - `_rerank(query, docs, top_n)`: для cross-encoder считает пары `(query, doc)` через
+    `model(**enc).logits`; для bi-encoder — косинус эмбеддингов. Фоллбэк bi↔cross сохранён.
+- `config.py`: `enable_hyde: bool = False` (отключён для скорости — экономит 1 вызов GigaChat).
+  `rerank_model` по умолчанию → jina-путь, но на ВМ переопределён через `RERANK_MODEL` в compose
+  на `/app/models/all-MiniLM-L6-v2` (пустая строка = reranker выключен).
+- `requirements.txt`: добавлен `einops` (обязателен для кастомного кода jina:
+  `modeling_xlm_roberta.py` → `from einops import rearrange`) — нужен, если jina вернут.
+- **Починен детект статьи**: в `CODEX_HINTS` добавлены `укрф` и `ук рф` → УК, чтобы
+  «статья 105 укрф» / «статья 105 УК РФ» открывали УК РФ ст. 105 (раньше «нет ответа»).
+- На ВМ удалён неиспользуемый `onnx/` из jina (~3.9 ГБ) — экономия диска.
 
-### Написано, но НЕ проверено (сессия оборвана переполнением контекста)
-- Reranker задеплоен на ВМ (пересборка образа + `docker compose up -d`), но живой `/ask`-тест R1
-  не считан. Статус reranker на проде **НЕИЗВЕСТЕН**: либо улучшение ранжирования (нужная статья
-  гарантированно в топе контекста → меньше ложно-отрицательных «нет ответа» от GigaChat), либо
-  деградация (MiniLM-L6-v2 слаб для юр. текста vs Giga-эмбеддингов). НУЖНО ПРОВЕРИТЬ.
+### Проверено на ВМ (живой `/ask` после возврата на MiniLM + отключения HyDE)
+- **Скорость**: ~18–26с на запрос (было ~2 мин с jina). Reranker теперь пренебрежимо быстр.
+- Детект статьи починен: «статья 105 укрф» / «статья 105 УК РФ» / «что за статья 105 УК РФ» →
+  все **УК РФ ст. 105 (убийство)** ✅.
+- Ранжирование корректно: «кража» → топ-1 источник **Уголовный кодекс** (MiniLM даже лучше jina,
+  который ставил КоАП выше); «неуплата налогов»→НК; «алименты»→СК; «грабёж»→УК ст.161;
+  «увольнение»→ТК ст.81.
+- «когда выходят на пенсию» / «пенсия» → честное «нет ответа» (пенсий в 26 кодексах нет) — не баг.
+- Флуктуация GigaChat (см. ниже) сохраняется, но к reranker не относится.
 
 ### Грабли / находки
+- **jina на CPU = ~2 мин/запрос** из-за 278M на пуле 24 кандидатов. На CPU ВМ неприемлемо;
+  нужен либо GPU, либо лёгкий reranker (MiniLM), либо сильная оптимизация (уменьшить пул/max_length).
+- jina требует `trust_remote_code=True`; кастомный `modeling_xlm_roberta.py` несовместим со свежим
+  transformers (удалён `create_position_ids_from_input_ids`) — патч в `embedding.py` (на диске ВМ).
+- `einops` обязателен для jina (жёсткий import), иначе `ImportError`.
+- MiniLM как bi-encoder грузится ТОЛЬКО через `SentenceTransformer` (есть `modules.json`);
+  грузить его через `AutoModelForSequenceClassification` — ошибка/мусор. Учтено детектом `modules.json`.
 - **GigaChat (Сбер) НЕДЕТЕРМИНИРОВАН даже при `temperature=0`** (см. блок 2026-09-09 продолжение 5):
-  ложные отрицания «возврат ндфл»/«права человека» флейковые (~50%). Reranker — лишь частичное
-  лечение (поднимает релевантный чанк в топ), но недетерминизм генерации не устраняет.
-- `models/` в .gitignore → `rerank_model` не в репозитории; на чистом клоне rerank упадёт и
+  редкие «0 источников»/«нет ответа» — флуктуация retrieval (пустой пул до reranker из-за HyDE/rewrite),
+  а НЕ поломка reranker. Reranker переупорядочивает только непустой пул.
+- `models/` в .gitignore → модели и `rerank_model` не в репозитории; на чистом клоне rerank упадёт и
   грациозно выключится (fallback). На ВМ модель есть (bind-mount).
 
 ### Статус сессии
-- Локальные правки A' — в репозитории (commit de579be).
-- Правки reranker (`config.py` + `rag/engine.py`, +50 строк) — НЕ закоммичены, висят в рабочем дереве.
-- `_vmtest3.py` — временный тест-скрипт, НЕ коммитить (добавить в .gitignore или удалить).
-- Handoff: NOTES.md обновлён, LoreBase синкнут, контрольный коммит + push выполнены по запросу.
+- Деплой актуален: image `kodeksbot-app` пересобран, контейнер `kodeksbot` Up, reranker = MiniLM
+  (через `RERANK_MODEL` в compose), HyDE выключен. jina-модель на диске ВМ (опц. возврат).
+- Локальные правки закоммичены (см. коммит). `models/` в .gitignore.
+- Атрибуция: jina-reranker-v2-base-multilingual — CC-BY-NC-4.0 (Jina AI), некоммерческое
+  использование согласовано пользователем; при публикации добавить в README/Notices.
 
 ### Следующие шаги (Next Steps)
-1. Прочитать/перезапустить `/ask`-прогон 10 вопросов на ВМ — подтвердить, что reranker не ломает
-   ранжирование и не ухудшает ответы (при деградации — `enable_rerank=false`).
-2. Остаточная флуктуация GigaChat (ложные отрицания) — решается только сменой LLM на
-   детерминированный либо глубоким reranker/cross-encoder (ручной качок модели в офлайн).
+1. ✅ Скорость возвращена («как раньше»): reranker = MiniLM, HyDE off. Задача **ЗАКРЫТА**.
+2. (опц.) Вернуть jina для качества reranker — только при GPU или если приемлема задержка; иначе MiniLM.
+3. (опц.) Остаточная флуктуация GigaChat (ложные «нет ответа» на коротких запросах) — решается только
+   сменой LLM на детерминированный либо стабилизацией HyDE/rewrite (но HyDE сейчас выключен).
+4. (опц.) LoreBase-синк при необходимости.
 
 ---
 
