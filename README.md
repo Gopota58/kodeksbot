@@ -5,6 +5,7 @@
 [![LLM](https://img.shields.io/badge/LLM-GigaChat%20%7C%20Сбер-green)](https://developers.sber.ru/gigachat)
 [![Vector Store](https://img.shields.io/badge/Vector%20Store-Chroma-ff6f61)](https://www.trychroma.com/)
 [![Retrieval](https://img.shields.io/badge/Retrieval-Hybrid%20%2B%20RRF-9cf)](docs/ARCHITECTURE.md)
+[![Reranker](https://img.shields.io/badge/Reranker-MiniLM%20%2F%20jina-ff69b4)](docs/ARCHITECTURE.md)
 [![Deploy](https://img.shields.io/badge/Deploy-Yandex%20Cloud-orange)](docs/DEPLOY.md)
 [![RAG](https://img.shields.io/badge/RAG-FastAPI%20%2B%20LangChain-005571?logo=fastapi&logoColor=white)](app.py)
 [![CI](https://github.com/Gopota58/kodeksbot/actions/workflows/ci.yml/badge.svg)](https://github.com/Gopota58/kodeksbot/actions/workflows/ci.yml)
@@ -24,6 +25,11 @@
 
 - 🔍 **Гибридный поиск** — векторный cosine (Chroma) + BM25/TF-IDF, слияние через
   Reciprocal Rank Fusion (RRF). Точнее чистого cosine на русском языке.
+- 🏆 **Reranker поверх гибридной выдачи** — подключаемая модель переранжирования
+  (`rerank_model`) переупорядочивает кандидатов и поднимает релевантный фрагмент в топ,
+  повышая точность цитирования. По умолчанию — лёгкий и быстрый `all-MiniLM-L6-v2`
+  (bi-encoder, CPU-friendly); опционально — мультиязычный cross-encoder
+  `jina-reranker-v2-base-multilingual` для максимального качества на GPU.
 - 📚 **Обязательное цитирование** — под каждым ответом блок «Источники» с карточками
   (кодекс / страница / фрагмент + кнопка «Копировать фрагмент»).
 - 🧠 **Локальные русскоязычные эмбеддинги** — `Giga-Embeddings-instruct-480M` (Сбер,
@@ -60,7 +66,8 @@ flowchart LR
     HY --> K[BM25 / TF-IDF]
     V --> RRF[RRF-слияние<br/>+ порог 1.35]
     K --> RRF
-    RRF --> LLM[GigaChat-2 · Сбер<br/>langchain-gigachat]
+    RRF --> RR[Reranker<br/>переранжирование кандидатов]
+    RR --> LLM[GigaChat-2 · Сбер<br/>langchain-gigachat]
     LLM -->|ответ + цитаты| API
     API -->|источники| U
 
@@ -148,6 +155,7 @@ docker compose up --build
 | `EMBED_PROVIDER` | провайдер эмбеддингов | `local` |
 | `EMBEDDING_MODEL_ID` / `model_dir` | локальная модель эмбеддингов | `Giga-Embeddings-instruct-480M-0826` |
 | `EMBED_DEVICE` | устройство эмбеддингов | `cuda` (локально) / `cpu` (облако) |
+| `RERANK_MODEL` | путь к модели-рерanker (SentenceTransformer bi-encoder, напр. `all-MiniLM-L6-v2`, или cross-encoder jina); пусто — без переранжирования | — |
 | `ALLOWED_ORIGINS` | CORS (через запятую, `*` — все) | `*` |
 
 Полный список эндпоинтов и нюансы интеграции GigaChat — в [docs/API.md](docs/API.md).
@@ -189,7 +197,7 @@ kodeksbot/
 - [x] Локальные русскоязычные эмбеддинги (Giga-Embeddings-480M, офлайн).
 - [x] Генерация на GigaChat + обязательное цитирование источников.
 - [x] Деплой в Yandex Cloud (Docker Compose, CPU).
-- [ ] Reranker (cross-encoder) поверх гибридной выдачи.
+- [x] Reranker поверх гибридной выдачи (по умолчанию `all-MiniLM-L6-v2`, опц. cross-encoder jina).
 - [ ] Смена эмбеддинга на `ai-forever/sbert_large_nlu_ru` (выше качество, тяжелее).
 - [ ] Расширение корпуса и мультиарендность.
 

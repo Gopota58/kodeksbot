@@ -29,7 +29,8 @@ data/docs/*.pdf|docx|txt
 Пользователь (static/index.html) → POST /ask {question}
   → rag/engine.py
       - _expand_query()        (юр-синонимы: зарплата↔заработная плата и т.п.)
-      - _retrieve_hybrid():    векторный cosine (Chroma) + BM25/TF-IDF → RRF (top-k=8)
+      - _retrieve_hybrid():    векторный cosine (Chroma) + BM25/TF-IDF → RRF (cand_k=max(k*3,24))
+      - _rerank():             переранжирование кандидатов (rerank_model; по умолч. all-MiniLM-L6-v2, опц. jina cross-encoder)
       - фильтр иррелевантности (_MAX_IRRELEVANT_DISTANCE = 1.35, шкала Chroma)
       - build_llm() → GigaChat (OAuth-токен через SDK)
       - промпт с обязательным цитированием источника
@@ -55,6 +56,11 @@ data/docs/*.pdf|docx|txt
   делает SDK (`langchain-gigachat`).
 - **Ретривер:** гибридный вектор + BM25 с RRF — точнее чистого cosine на русском.
   Порог иррелевантности **1.35** откалиброван под Giga (REL≈0.88..1.33, NOISE≈1.37..1.65).
+- **Reranker:** подключаемая модель поверх гибридной выдачи (`rerank_model` в `config.py`).
+  По умолчанию — лёгкий `all-MiniLM-L6-v2` (bi-encoder, cosine, CPU-friendly, ~7–11 с/запрос на ВМ);
+  опционально — `jina-reranker-v2-base-multilingual` (cross-encoder, 278M, мультиязычный, в т.ч. русский,
+  выше качество, но тяжёл для CPU — ~2 мин/запрос; лицензия CC-BY-NC-4.0, только некоммерческое использование).
+  Пустое значение `rerank_model` отключает переранжирование.
 
 ## Состояние
 - [x] корпус: 26 кодексов РФ в `data/docs/` (PDF/DOCX)
@@ -63,4 +69,4 @@ data/docs/*.pdf|docx|txt
 - [x] генерация на GigaChat + обязательное цитирование
 - [x] тёмный веб-UI с цитированием источников
 - [x] деплой в Yandex Cloud (Compute VM, Docker Compose, CPU) — см. [DEPLOY.md](DEPLOY.md)
-- [ ] reranker (cross-encoder) поверх гибридной выдачи
+- [x] reranker поверх гибридной выдачи (по умолчанию all-MiniLM-L6-v2, опц. jina cross-encoder)
