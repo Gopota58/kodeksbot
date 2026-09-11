@@ -55,14 +55,14 @@ class Settings(BaseSettings):
 
     # --- Ретривер ---
     retriever_k: int = 8
-    enable_hyde: bool = False   # HyDE: генерить гипотетический фрагмент кодекса для улучшения поиска
+    enable_hyde: bool = True    # HyDE: генерить гипотетический фрагмент кодекса для улучшения поиска
 
     # --- LLM (GigaChat — Сбер, российский облачный LLM) ---
     llm_provider: str = "gigachat"   # "local" (LM Studio/Ollama), "openai" или "gigachat"
     llm_base_url: str = ""            # для gigachat не используется (берётся gigachat_base_url)
     llm_api_key: str = ""             # для gigachat — Authorization key из developers.sber.ru
     llm_model: str = "GigaChat-2"     # см. GET /v1/models (GigaChat-2 / GigaChat-Pro / GigaChat-Max)
-    llm_temperature: float = 0.2
+    llm_temperature: float = 0.0
     llm_top_p: float = 0.9
     llm_max_tokens: int = 1024
     llm_use_system_prompt: bool = True
