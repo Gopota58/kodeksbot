@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # --- Ретривер ---
     retriever_k: int = 8
     enable_hyde: bool = True    # HyDE: генерить гипотетический фрагмент кодекса для улучшения поиска
+    # Reranker: путь к локальной sentence-transformer модели (напр. all-MiniLM-L6-v2) для
+    # переранжирования кандидатов гибридного поиска. Пустая строка = reranker отключён.
+    rerank_model: str = str(BASE_DIR / "models" / "all-MiniLM-L6-v2")
 
     # --- LLM (GigaChat — Сбер, российский облачный LLM) ---
     llm_provider: str = "gigachat"   # "local" (LM Studio/Ollama), "openai" или "gigachat"

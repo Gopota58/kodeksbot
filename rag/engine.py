@@ -29,6 +29,13 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 from config import settings as default_settings
 
+try:
+    from sentence_transformers import SentenceTransformer as _STransformer
+    _HAVE_ST = True
+except Exception:  # sentence-transformers может отсутствовать — reranker тогда отключается
+    _HAVE_ST = False
+    _STransformer = None
+
 log = logging.getLogger(__name__)
 
 
@@ -363,6 +370,19 @@ class RAGEngine:
         self.settings = settings
         self.embeddings = embeddings or build_embeddings(self.settings)
         self.llm = llm or build_llm(self.settings)
+        # Reranker (опц., config.rerank_model): локальная sentence-transformer модель
+        # (напр. all-MiniLM-L6-v2), переранжирует кандидатов гибридного поиска по
+        # семантической близости запросу. Работает офлайн (модель уже в models/).
+        # При сбое/отсутствии — self._rerank_model=None → reranker молча отключается.
+        self._rerank_model = None
+        rm = getattr(self.settings, "rerank_model", "") or ""
+        if _HAVE_ST and rm:
+            try:
+                self._rerank_model = _STransformer(str(rm), device=self.settings.embed_device)
+                log.info("Reranker загружен: %s", rm)
+            except Exception as e:
+                log.warning("Reranker не загрузился (%s), отключаем: %s", rm, e)
+                self._rerank_model = None
         self.collection_name = self.settings.collection_name
         self.client = chromadb.PersistentClient(path=self.settings.chroma_dir)
         self._lock = threading.Lock()
@@ -936,13 +956,39 @@ class RAGEngine:
             log.warning("HyDE не удался, используем обычный поиск: %s", e)
         return None
 
+    def _rerank(self, query: str, docs: list, top_n: int) -> list:
+        """Переранжирование кандидатов reranker-моделью (MiniLM) по близости к запросу.
+
+        Берём больше кандидатов из гибридного поиска, затем упорядочиваем их по
+        косинусной близости эмбеддингов reranker-модели к запросу. Это поднимает
+        действительно релевантный чанк (напр. нужную статью кодекса) наверх контекста,
+        что снижает шанс ложно-отрицательного ответа LLM. Если reranker недоступен —
+        возвращаем исходных кандидатов (деградация без поломок).
+        """
+        if self._rerank_model is None or not docs:
+            return docs[:top_n]
+        try:
+            q_emb = self._rerank_model.encode([query], normalize_embeddings=True)
+            d_emb = self._rerank_model.encode(
+                [d.page_content for d in docs], normalize_embeddings=True
+            )
+            sims = (d_emb @ q_emb[0]).tolist()
+            order = sorted(range(len(docs)), key=lambda i: sims[i], reverse=True)
+            return [docs[i] for i in order[:top_n]]
+        except Exception as e:
+            log.warning("Rerank не удался, возвращаем исходный порядок: %s", e)
+            return docs[:top_n]
+
     def retrieve(self, question: str, k: int | None = None):
         k = k or self.settings.retriever_k
         qn = self._normalize_query(question)  # нормализуем для детекта статьи (убираем «скажи» и т.п.)
         # HyDE (опц., config.enable_hyde): гипотетический фрагмент → эмбеддинг запроса
         hyde_vec = self._hyde_vector(question) if getattr(self.settings, "enable_hyde", False) else None
         queries = self._prepare_query(question)
-        docs = self._retrieve_hybrid_multi(queries, k, hyde_vector=hyde_vec)
+        # Берём расширенный пул кандидатов, затем переранжируем reranker-моделью до top_k
+        cand_k = max(k * 3, 24)
+        cand = self._retrieve_hybrid_multi(queries, cand_k, hyde_vector=hyde_vec)
+        docs = self._rerank(question, cand, k)
         # Точный поиск по номеру статьи — ставим результаты выше нечёткого
         art = self._detect_article_query(qn)
         if art is not None:

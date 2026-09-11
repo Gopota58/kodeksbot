@@ -14,6 +14,8 @@ venv/
 # Agent / local working notes (не для публичного репо — содержит токен бота)
 MEMORY.md
 _check.py
+_vmtest*.py
+_diag*.py
 
 # Локальные генераторы шуточного корпуса (в портфолио — серьёзный docs/)
 rewrite_cats.py
