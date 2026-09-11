@@ -514,18 +514,24 @@ class RAGEngine:
             return question
 
     def _prepare_query(self, question: str) -> list:
-        """Готовит варианты запроса: оригинал + LLM-переформулировка + синоним-расширения.
+        """Готовит варианты запроса: исходный (сырой) + нормализованный + LLM-переформулировка
+        + синоним-расширения.
 
-        Сначала нормализуем вопрос (убираем слова-паразиты), затем кэшируем результат по
-        нормализованному тексту, чтобы не дёргать LLM повторно при двойном вызове
-        retrieve() (контекст и источники в рамках одного ask()).
+        ВАЖНО: первым вариантом (qi==0) идёт СЫРОЙ вопрос — именно по нему считается гейт
+        релевантности (orig_best) в `_retrieve_hybrid_multi`. Нормализация (удаление
+        «скажи/как правильно») иногда УХУДШАЕТ эмбеддинг: «как правильно уволиться с работы»
+        после нормализации → «уволиться с работы» даёт дистанцию ~1.35 и отсекался, а сырой
+        запрос — ~1.20 и релевантен. Гейт по сырому запросу честно отсекает нерелевантное
+        («пенсия» ~1.30, «соседи шумят» ~1.53), не давая LLM-rewrite «спасать» шум.
+        Кэш — по нормализованному тексту.
         """
+        raw = question
         question = self._normalize_query(question)
         cached = self._query_cache.get(question)
         if cached is not None:
             return cached
         rewritten = self._rewrite_query(question)
-        variants = [question, rewritten, self._expand_query(question), self._expand_query(rewritten)]
+        variants = [raw, question, rewritten, self._expand_query(question), self._expand_query(rewritten)]
         seen, uniq = set(), []
         for v in variants:
             v = v.strip()
