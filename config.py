@@ -55,6 +55,7 @@ class Settings(BaseSettings):
 
     # --- Ретривер ---
     retriever_k: int = 8
+    enable_hyde: bool = False   # HyDE: генерить гипотетический фрагмент кодекса для улучшения поиска
 
     # --- LLM (GigaChat — Сбер, российский облачный LLM) ---
     llm_provider: str = "gigachat"   # "local" (LM Studio/Ollama), "openai" или "gigachat"
