@@ -1,3 +1,37 @@
+## 2026-09-11 (вечер) — Публикация reranker в публичный GitHub (README + описание + теги)
+
+### Сделано (Done)
+- Доработан и задеплоен **reranker**: универсальный загрузчик (`modules.json` → SentenceTransformer
+  bi-encoder MiniLM/косинус; иначе jina cross-encoder). На ВМ reranker = `all-MiniLM-L6-v2`
+  (через `RERANK_MODEL` в compose) ради скорости ~7–11с/запрос; jina (278M) оставлена на диске ВМ
+  как опция для GPU (на CPU ~2 мин/запрос — неприемлемо).
+- Починен детект статьи: `CODEX_HINTS` + `укрф`/`ук рф` → УК (раньше «статья 105 укрф» → нет ответа).
+- `config.py`: `enable_hyde=False` (отключён для скорости).
+- Запушено в `origin/main`: 6616d73 (NOTES/config/engine/requirements) + cde1b7a (README+ARCHITECTURE),
+  `b9af8c1..cde1b7a`.
+- Публичный Gopota58/kodeksbot причёсан «для работодателя»: README (бейдж Reranker, пункт
+  Возможностей, узел в mermaid, строка `RERANK_MODEL` в `.env`, роадмап `[x]`); docs/ARCHITECTURE.md
+  синхронизирован; описание репо + тег `reranker` обновлены.
+
+### Грабли
+- GitHub REST `PATCH /repos/{owner}/{repo}` с полем `topics` возвращает 200, но **не применяет теги**
+  (даже с `Accept: application/vnd.github.mercy-preview+json`) → использован GraphQL
+  `mutation updateTopics`. См. [[wiki/concepts/github-update-repo-topics]].
+- Описание репо через PowerShell `Invoke-RestMethod -Body` (строка `ConvertTo-Json`) → mojibake
+  кириллицы; слать строго UTF-8 байтами / через Python `urllib` / GraphQL.
+
+### Статус
+- Публичный репо актуально (main вперёд, описание+теги+README отражают reranker). ВМ: контейнер
+  `kodeksbot` Up, reranker=MiniLM, HyDE off, детект статьи починен.
+- Лицензия: jina — **CC-BY-NC-4.0 (некоммерческое)**, согласовано; deploy-дефолт MiniLM (пермиссивная).
+  В README это явно указано.
+
+### Next Steps
+1. (опц.) jina для качества reranker — только при GPU / приемлемой задержке.
+2. (опц.) Остаточная флуктуация GigaChat (ложные «нет ответа» на коротких запросах) — не к reranker.
+
+---
+
 ## 2026-09-11 — Reranker: MiniLM (быстро, как раньше) + детект статьи + HyDE off
 
 ### Хроника (Done)

@@ -7,7 +7,7 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
 + локальные эмбеддинги sentence-transformers для генерации. Статус: каркас собран на базе фреймворка «Котобаза» (FastAPI+LangChain+Chroma); корпус из 26 кодексов РФ загружен в data/docs/.
 
 ## 2. Карта папок
-- `rag/engine.py` — ядро RAG: эмбеддинги, Chroma, гибридный ретривер (вектор+BM25→RRF), GigaChat, reindex, watcher
+- `rag/engine.py` — ядро RAG: эмбеддинги, Chroma, гибридный ретривер (вектор+BM25→RRF), **reranker поверх выдачи** (MiniLM по умолч., опц. jina cross-encoder), GigaChat, reindex, watcher
 - `app.py` — FastAPI: `/ask` (+источники), `/ingest`, `/upload`, `/documents`, `/health`, CORS, статикa
 - `config.py` — настройки из `.env` (pydantic-settings): LLM / эмбеддинги / Chroma
 - `ingest.py` — CLI: `python ingest.py` (строит индекс Chroma из data/docs/)
