@@ -20,6 +20,9 @@ services:
       - LLM_PROVIDER=gigachat
       # Linux-путь к российскому CA (в .env прописан Windows-путь — переопределяем)
       - GIGACHAT_CA_BUNDLE_FILE=/app/certs/Russian_Trusted_Root_CA.pem
+      # Явно фиксируем CPU-дружелюбный reranker. В образе есть и jina cross-encoder,
+      # но на 2 vCPU он неприемлемо медленный — MiniLM (bi-encoder) даёт ~7-11 с/запрос.
+      - RERANK_MODEL=/app/models/all-MiniLM-L6-v2
     volumes:
       - ./models:/app/models
       - ./data/docs:/app/data/docs
