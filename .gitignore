@@ -10,6 +10,9 @@ venv/
 
 # Secrets
 .env
+# Резервные копии .env (cp .env .env.bak-$(date +%Y%m%d-%H%M%S) перед правками) —
+# внутри живые API-ключи, в репозиторий попадать не должны.
+.env.bak*
 
 # Agent / local working notes (не для публичного репо — содержит токен бота)
 MEMORY.md
