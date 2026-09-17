@@ -28,9 +28,22 @@ class Settings(BaseSettings):
     )
 
     # --- API-сервер ---
-    api_key: str = "88888888"     # ключ доступа к /ask и админ-эндпоинтам (смените в проде!)
+    # Публичный ключ: открывает только /ask. Он попадает в static/index.html и потому
+    # считается публичным — любой посетитель демо может его прочитать.
+    # Значение должно СОВПАДАТЬ с константой API_KEY в static/index.html,
+    # иначе UI получит 401. Здесь оно продублировано, чтобы свежий клон работал сразу.
+    api_key: str = "kb_pub_ahMilkR7bgXKaSDs9FKX6hC1"
+    # Админский ключ: открывает /upload, /ingest, /documents и DELETE /documents/{file}.
+    # В HTML НЕ попадает (вводится вручную в UI и хранится в localStorage браузера).
+    # Пустая строка -> используется api_key (обратная совместимость, локальная разработка).
+    admin_api_key: str = ""
     host: str = "0.0.0.0"
     port: int = 8000
+
+    # --- Rate limiting (защита квоты GigaChat на публичном демо) ---
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 30         # /ask — запросов в минуту на один IP
+    rate_limit_admin_per_minute: int = 10   # /upload, /ingest, /documents — на один IP
 
     # --- Данные и векторная БД (пути относительны корня проекта) ---
     docs_dir: str = str(BASE_DIR / "data" / "docs")   # корпус: 26 кодексов РФ (PDF/DOCX)
@@ -90,6 +103,15 @@ class Settings(BaseSettings):
         if self.allowed_origins.strip() == "*":
             return ["*"]
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @property
+    def resolved_admin_api_key(self) -> str:
+        """Ключ для админ-эндпоинтов.
+
+        Если `ADMIN_API_KEY` не задан — используется публичный `API_KEY`
+        (удобно для локальной разработки; в публичном деплое задавайте оба).
+        """
+        return self.admin_api_key.strip() or self.api_key
 
     def resolve_embedding_model(self) -> str:
         """Путь к локальной модели эмбеддингов (models/rubert-tiny2).

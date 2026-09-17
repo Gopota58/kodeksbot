@@ -6,6 +6,7 @@
 [![Vector Store](https://img.shields.io/badge/Vector%20Store-Chroma-ff6f61)](https://www.trychroma.com/)
 [![Retrieval](https://img.shields.io/badge/Retrieval-Hybrid%20%2B%20RRF-9cf)](docs/ARCHITECTURE.md)
 [![Reranker](https://img.shields.io/badge/Reranker-MiniLM%20%2F%20jina-ff69b4)](docs/ARCHITECTURE.md)
+[![Security](https://img.shields.io/badge/Security-rate--limited%20%7C%20split%20keys-brightgreen)](#-безопасность)
 [![Deploy](https://img.shields.io/badge/Deploy-Yandex%20Cloud-orange)](docs/DEPLOY.md)
 [![RAG](https://img.shields.io/badge/RAG-FastAPI%20%2B%20LangChain-005571?logo=fastapi&logoColor=white)](app.py)
 [![CI](https://github.com/Gopota58/kodeksbot/actions/workflows/ci.yml/badge.svg)](https://github.com/Gopota58/kodeksbot/actions/workflows/ci.yml)
@@ -41,6 +42,11 @@
   с историей диалога в `localStorage` (XSS-safe рендер).
 - 💬 **Telegram-бот** и десктоп-клиент — опционально (включены в репозиторий).
 - ☁️ **Деплой в Yandex Cloud** — Docker Compose на Compute VM, CPU-only.
+- 🛡 **Разделение ключей доступа** — публичный ключ открывает только `/ask`; загрузка,
+  переиндексация и удаление документов требуют отдельный админский ключ, который в
+  открытую статику не попадает.
+- ⏱ **Rate limiting** — скользящее окно на IP для `/ask` и админ-эндпоинтов (429 +
+  `Retry-After`), чтобы публичное демо не выжигало квоту GigaChat.
 
 ---
 
@@ -107,7 +113,7 @@ uvicorn app:app --port 8000
 ```bash
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: 88888888" \
+  -H "X-API-Key: $API_KEY" \
   -d "{\"question\":\"Какая ответственность за задержку зарплаты?\"}"
 ```
 
@@ -133,8 +139,11 @@ docker compose up --build
    выключить вотчер реиндексации.
 4. `Dockerfile` собирается с `python:3.12-slim` (numpy 2.5.2 требует ≥3.12),
    `torch==2.14.0+cpu` + индекс PyTorch CPU, `requirements.txt` — строго в UTF-8.
-5. Переменные: `EMBED_DEVICE=cpu`, `GIGACHAT_CA_BUNDLE_FILE=/app/certs/Russian_Trusted_Root_CA.pem`.
+5. Переменные: `EMBED_DEVICE=cpu`, `GIGACHAT_CA_BUNDLE_FILE=/app/certs/Russian_Trusted_Root_CA.pem`,
+   `ADMIN_API_KEY` (отдельно от публичного `API_KEY`).
 6. `docker compose up -d`; открыть TCP 8000 в группе безопасности.
+7. Эксплуатация: swap-файл 2 ГБ (`vm.swappiness=10`) — страховка от OOM на 4 ГБ RAM;
+   периодически `docker builder prune -f` (build cache разрастается до ~12 ГБ).
 
 Проверено end-to-end: `/health` → `{"status":"ok"}`, `/ask` отвечает со ссылками на статьи
 ТК РФ / ГК РФ.
@@ -145,7 +154,11 @@ docker compose up --build
 
 | Переменная | Назначение | По умолчанию |
 |---|---|---|
-| `API_KEY` | доступ к `/ask` и админ-эндпоинтам | `88888888` (смените в проде!) |
+| `API_KEY` | публичный ключ: только `/ask`. Зашит в `static/index.html`, поэтому **не секрет**. Меняя его, правьте и там | `kb_pub_…` (см. `.env.example`) |
+| `ADMIN_API_KEY` | админский ключ: `/upload`, `/ingest`, `/documents`, `DELETE /documents/{file}`. В статику не попадает | — (пусто → берётся `API_KEY`) |
+| `RATE_LIMIT_ENABLED` | включить ограничение частоты запросов | `true` |
+| `RATE_LIMIT_PER_MINUTE` | лимит `/ask` на один IP | `30` |
+| `RATE_LIMIT_ADMIN_PER_MINUTE` | лимит админ-эндпоинтов на один IP | `10` |
 | `LLM_PROVIDER` | провайдер LLM | `gigachat` |
 | `LLM_API_KEY` | Authorization key из консоли GigaChat | — |
 | `LLM_MODEL` | id модели (см. `GET /v1/models`) | `GigaChat-2` |
@@ -155,6 +168,8 @@ docker compose up --build
 | `EMBED_PROVIDER` | провайдер эмбеддингов | `local` |
 | `EMBEDDING_MODEL_ID` / `model_dir` | локальная модель эмбеддингов | `Giga-Embeddings-instruct-480M-0826` |
 | `EMBED_DEVICE` | устройство эмбеддингов | `cuda` (локально) / `cpu` (облако) |
+| `RETRIEVER_K` | сколько чанков отдавать в контекст LLM | `8` |
+| `ENABLE_HYDE` | HyDE: +1 вызов GigaChat на запрос, лучше семантика | `false` |
 | `RERANK_MODEL` | путь к модели-рерanker (SentenceTransformer bi-encoder, напр. `all-MiniLM-L6-v2`, или cross-encoder jina); пусто — без переранжирования | — |
 | `ALLOWED_ORIGINS` | CORS (через запятую, `*` — все) | `*` |
 
@@ -166,11 +181,12 @@ docker compose up --build
 
 ```
 kodeksbot/
-├── app.py                 # FastAPI: /ask, /ingest, /upload, /documents, /health
+├── app.py                 # FastAPI: /ask, /ingest, /upload, /documents, /health + rate limiting
 ├── config.py              # настройки из .env (pydantic-settings)
 ├── ingest.py              # CLI: построение индекса Chroma из data/docs/
 ├── rag/engine.py          # ядро RAG: эмбеддинги, Chroma, гибридный ретривер, GigaChat
 ├── static/index.html      # тёмный веб-чат (vanilla JS/CSS, без сборщиков)
+├── static/favicon.svg     # иконка (весы Фемиды)
 ├── bot.py / desktop_client.py  # Telegram-бот / десктоп (опц.)
 ├── data/docs/             # корпус: 26 кодексов РФ (PDF/DOCX)
 ├── certs/                 # Russian Trusted Root CA (для SSL GigaChat)
@@ -198,6 +214,8 @@ kodeksbot/
 - [x] Генерация на GigaChat + обязательное цитирование источников.
 - [x] Деплой в Yandex Cloud (Docker Compose, CPU).
 - [x] Reranker поверх гибридной выдачи (по умолчанию `all-MiniLM-L6-v2`, опц. cross-encoder jina).
+- [x] Rate limiting и разделение публичного/админского ключей доступа.
+- [ ] TLS + reverse-proxy перед демо-стендом (домен, Let's Encrypt).
 - [ ] Смена эмбеддинга на `ai-forever/sbert_large_nlu_ru` (выше качество, тяжелее).
 - [ ] Расширение корпуса и мультиарендность.
 
@@ -207,9 +225,22 @@ kodeksbot/
 
 - Реальный `.env` **не коммитится** (в `.gitignore`); секреты — только в переменных
   окружения или Yandex Lockbox, никогда в образе.
-- `API_KEY` по умолчанию `88888888` — **обязательно смените** на продакшн-сервере.
+- **Ключи разделены по зонам ответственности.** Публичный `API_KEY` открывает только
+  `/ask`. Он намеренно лежит в `static/index.html`, поэтому считается публичным: его
+  видит любой посетитель демо. Всё, что меняет состояние — `/upload`, `/ingest`,
+  `/documents`, `DELETE /documents/{file}` — требует `ADMIN_API_KEY`, который в статику
+  не попадает и вводится вручную в UI (кнопка 🔑, хранится в `localStorage`).
+  Без такого разделения публичный ключ из HTML позволял бы любому удалить корпус.
+- **Rate limiting.** Скользящее окно на IP: `/ask` — 30 запросов/мин, админ-эндпоинты —
+  10/мин. Превышение → `429` с заголовком `Retry-After`. Защищает квоту GigaChat от
+  случайного или намеренного выжигания на открытом демо.
+- `API_KEY`/`ADMIN_API_KEY` по умолчанию слабые — **обязательно смените** на продакшн-сервере
+  (`python -c "import secrets;print(secrets.token_urlsafe(24))"`).
 - GigaChat-ключ используется только для получения OAuth-токена SDK; сырой ключ никуда
   не уходит как Bearer.
+- **Что ещё стоит сделать при выходе за пределы демо:** терминировать TLS перед приложением
+  (домен + reverse-proxy с Let's Encrypt), закрыть порт 8000 в группе безопасности и
+  оставить наружу только 443, вынести rate limiting в Redis при нескольких репликах.
 
 ---
 

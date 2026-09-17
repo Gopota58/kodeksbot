@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="apple-touch-icon" href="/static/favicon.svg">
     <title>⚖️ КодексБот — юридический RAG-ассистент</title>
     <style>
         :root {
@@ -322,6 +324,7 @@
             <button class="btn" id="uploadBtn" title="Загрузить документ (PDF/DOCX/TXT)">📎 <span class="lbl">Загрузить</span></button>
             <button class="btn" id="docsBtn" title="Список документов">📚 <span class="lbl">Документы</span></button>
             <button class="btn" id="reindexBtn" title="Переиндексировать корпус">🔄 <span class="lbl">Переиндексировать</span></button>
+            <button class="btn" id="adminBtn" title="Админ-ключ (для загрузки и переиндексации)">🔑</button>
             <button class="btn danger" id="clearBtn" title="Очистить историю">🗑️</button>
         </div>
         <input type="file" id="fileInput" accept=".pdf,.docx,.txt" hidden>
@@ -372,9 +375,43 @@
         });
 
         // ===================== Настройки =====================
-        const API_KEY = '88888888';   // должен совпадать с API_KEY в .env
+        // Публичный ключ: открывает ТОЛЬКО /ask. Он лежит в открытом HTML, поэтому
+        // секретом не является — его видит любой посетитель демо.
+        const API_KEY = 'kb_pub_ahMilkR7bgXKaSDs9FKX6hC1';
+        // Админский ключ (ADMIN_API_KEY) в HTML не хранится: он вводится вручную
+        // кнопкой 🔑 и лежит только в localStorage браузера. Нужен для загрузки
+        // документов, переиндексации и списка документов.
+        const ADMIN_KEY_STORAGE = 'kodeksbot_admin_key_v1';
         const STORAGE_KEY = 'kodeksbot_history_v1';
         const $ = (id) => document.getElementById(id);
+
+        function getAdminKey() {
+            try { return localStorage.getItem(ADMIN_KEY_STORAGE) || ''; }
+            catch (e) { return ''; }
+        }
+        function setAdminKey(v) {
+            try {
+                if (v) localStorage.setItem(ADMIN_KEY_STORAGE, v);
+                else localStorage.removeItem(ADMIN_KEY_STORAGE);
+            } catch (e) { /* приватный режим — работаем без сохранения */ }
+        }
+        // Спрашиваем админ-ключ один раз и переиспользуем сохранённый.
+        function ensureAdminKey() {
+            let k = getAdminKey();
+            if (k) return k;
+            k = (prompt('Админ-ключ (ADMIN_API_KEY) — нужен для загрузки, переиндексации и списка документов.\nОн хранится только в этом браузере.') || '').trim();
+            if (k) setAdminKey(k);
+            return k;
+        }
+        function adminHeaders() {
+            const k = getAdminKey();
+            return k ? { 'X-API-Key': k } : {};
+        }
+        // 401 на админ-эндпоинте => сохранённый ключ устарел, забываем его.
+        function onAdminUnauthorized(detail) {
+            setAdminKey('');
+            toast('✗ ' + (detail || 'Неверный админ-ключ — введите заново (🔑)'), 'err');
+        }
 
         // ===================== История (localStorage) =====================
         function loadHistory() {
@@ -547,6 +584,10 @@
                     body: JSON.stringify({ question: q })
                 });
                 if (!res.ok) {
+                    if (res.status === 429) {
+                        const d = await res.json().catch(() => ({}));
+                        throw new Error(d.detail || 'Слишком много запросов — подождите минуту');
+                    }
                     if (res.status === 401) throw new Error('Неверный API-ключ');
                     throw new Error('Ошибка сервера: ' + res.status);
                 }
@@ -569,14 +610,16 @@
         // ===================== Загрузка документа =====================
         async function uploadFile(file) {
             if (!file) return;
+            if (!ensureAdminKey()) { toast('Нужен админ-ключ — нажмите 🔑', 'err'); return; }
             const fd = new FormData();
             fd.append('file', file);
             toast('Загрузка «' + file.name + '»…');
             try {
                 const res = await fetch('/upload', {
-                    method: 'POST', headers: { 'X-API-Key': API_KEY }, body: fd
+                    method: 'POST', headers: adminHeaders(), body: fd
                 });
                 const data = await res.json().catch(() => ({}));
+                if (res.status === 401) { onAdminUnauthorized(data.detail); return; }
                 if (!res.ok) throw new Error(data.detail || ('Ошибка ' + res.status));
                 toast('✓ ' + (data.message || 'Файл загружен и проиндексирован'), 'ok');
             } catch (e) {
@@ -586,12 +629,14 @@
 
         // ===================== Переиндексация =====================
         async function reindex() {
+            if (!ensureAdminKey()) { toast('Нужен админ-ключ — нажмите 🔑', 'err'); return; }
             const btn = $('reindexBtn');
             btn.disabled = true;
             toast('Переиндексация корпуса…');
             try {
-                const res = await fetch('/ingest', { method: 'POST', headers: { 'X-API-Key': API_KEY } });
+                const res = await fetch('/ingest', { method: 'POST', headers: adminHeaders() });
                 const data = await res.json().catch(() => ({}));
+                if (res.status === 401) { onAdminUnauthorized(data.detail); return; }
                 if (!res.ok) throw new Error(data.detail || ('Ошибка ' + res.status));
                 toast('✓ Индекс обновлён' + (data.chunks ? ' (' + data.chunks + ' чанков)' : ''), 'ok');
             } catch (e) {
@@ -604,10 +649,19 @@
         // ===================== Список документов =====================
         async function openDocs() {
             $('docsModal').classList.add('show');
+            if (!ensureAdminKey()) {
+                $('docsList').innerHTML = '<div class="doc-empty">Нужен админ-ключ — нажмите 🔑 в шапке.</div>';
+                return;
+            }
             $('docsList').innerHTML = '<div class="doc-empty">Загрузка…</div>';
             try {
-                const res = await fetch('/documents', { headers: { 'X-API-Key': API_KEY } });
+                const res = await fetch('/documents', { headers: adminHeaders() });
                 const data = await res.json().catch(() => ({}));
+                if (res.status === 401) {
+                    onAdminUnauthorized(data.detail);
+                    $('docsList').innerHTML = '<div class="doc-empty">Неверный админ-ключ — нажмите 🔑 и введите заново.</div>';
+                    return;
+                }
                 if (!res.ok) throw new Error(data.detail || ('Ошибка ' + res.status));
                 const docs = data.documents || [];
                 if (!docs.length) {
@@ -659,6 +713,23 @@
         $('reindexBtn').onclick = reindex;
         $('docsBtn').onclick = openDocs;
         $('docsClose').onclick = () => $('docsModal').classList.remove('show');
+
+        // Админ-ключ: сохранён -> 🔓, не задан -> 🔑
+        function renderAdminState() {
+            const b = $('adminBtn');
+            const has = !!getAdminKey();
+            b.textContent = has ? '🔓' : '🔑';
+            b.title = has
+                ? 'Админ-ключ сохранён. Нажмите, чтобы сменить или сбросить.'
+                : 'Админ-ключ (нужен для загрузки, переиндексации и списка документов)';
+            b.style.borderColor = has ? 'var(--ok)' : '';
+        }
+        $('adminBtn').onclick = () => {
+            const v = (prompt('Админ-ключ (ADMIN_API_KEY).\nПустое поле — сбросить сохранённый ключ:', '') || '').trim();
+            if (v) { setAdminKey(v); toast('Админ-ключ сохранён ✓', 'ok'); }
+            else { setAdminKey(''); toast('Админ-ключ сброшен', ''); }
+            renderAdminState();
+        };
         $('docsModal').addEventListener('click', (e) => { if (e.target === $('docsModal')) $('docsModal').classList.remove('show'); });
 
         // Drag & Drop
@@ -675,6 +746,7 @@
 
         // ===================== Старт =====================
         renderHistory();
+        renderAdminState();
         checkHealth();
         $('userInput').focus();
     </script>

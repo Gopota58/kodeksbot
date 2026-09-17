@@ -8,6 +8,9 @@ __pycache__/
 *.pyc
 .git/
 .gitignore
+# Служебные данные AI-агента и локальные логи — в образ не нужны
+.workbuddy-ai/
+logs/
 hh_ai/
 uvicorn_out.log
 uvicorn_err.log

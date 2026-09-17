@@ -145,7 +145,12 @@ def _load_file(path: str) -> list:
         return AutoDetectTextLoader(str(p)).load()
     if ext == ".pdf":
         try:
-            import fitz  # PyMuPDF — значительно быстрее pypdf и не зависает на проблемных PDF
+            # PyMuPDF: быстрее pypdf и не зависает на проблемных PDF.
+            # С версии 1.24 модуль называется `pymupdf`, старое имя `fitz` — deprecated.
+            try:
+                import pymupdf as fitz
+            except ImportError:
+                import fitz
             doc = fitz.open(str(p))
             docs = []
             for i, page in enumerate(doc, 1):

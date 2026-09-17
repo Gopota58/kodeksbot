@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="КодексБот">
+  <rect width="64" height="64" rx="14" fill="#0d1117"/>
+  <!-- стойка весов -->
+  <rect x="30" y="13" width="4" height="33" rx="2" fill="#c9a227"/>
+  <!-- основание -->
+  <rect x="19" y="45" width="26" height="5" rx="2.5" fill="#c9a227"/>
+  <!-- коромысло -->
+  <rect x="11" y="13" width="42" height="4" rx="2" fill="#c9a227"/>
+  <!-- верхушка -->
+  <circle cx="32" cy="12" r="4.5" fill="#c9a227"/>
+  <!-- левая чаша -->
+  <line x1="12" y1="17" x2="12" y2="22" stroke="#c9a227" stroke-width="3"/>
+  <path d="M5 22 H19 L12 35 Z" fill="none" stroke="#c9a227" stroke-width="3" stroke-linejoin="round"/>
+  <!-- правая чаша -->
+  <line x1="52" y1="17" x2="52" y2="22" stroke="#c9a227" stroke-width="3"/>
+  <path d="M45 22 H59 L52 35 Z" fill="none" stroke="#c9a227" stroke-width="3" stroke-linejoin="round"/>
+</svg>

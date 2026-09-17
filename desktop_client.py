@@ -7,7 +7,8 @@ import threading
 
 # --- КОНФИГУРАЦИЯ (можно переопределить через переменные окружения) ---
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/ask")
-API_KEY = os.environ.get("API_KEY", "88888888")
+# Публичный ключ (только /ask) — должен совпадать с API_KEY в .env и static/index.html
+API_KEY = os.environ.get("API_KEY", "kb_pub_ahMilkR7bgXKaSDs9FKX6hC1")
 
 # trust_env=False — ходить на localhost напрямую, минуя системный прокси
 # (KiberportalX/др.), иначе запрос к локальному серверу уходит в прокси и

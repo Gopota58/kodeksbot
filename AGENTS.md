@@ -8,13 +8,18 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
 
 ## 2. Карта папок
 - `rag/engine.py` — ядро RAG: эмбеддинги, Chroma, гибридный ретривер (вектор+BM25→RRF), **reranker поверх выдачи** (MiniLM по умолч., опц. jina cross-encoder), GigaChat, reindex, watcher
-- `app.py` — FastAPI: `/ask` (+источники), `/ingest`, `/upload`, `/documents`, `/health`, CORS, статикa
-- `config.py` — настройки из `.env` (pydantic-settings): LLM / эмбеддинги / Chroma
+- `app.py` — FastAPI: `/ask` (+источники), `/ingest`, `/upload`, `/documents`, `/health`,
+  `/favicon.ico`, CORS, статика, **rate limiting** (скользящее окно 60 с на IP) и **два ключа
+  доступа**: публичный `API_KEY` (только `/ask`) и `ADMIN_API_KEY` (всё, что меняет состояние)
+- `config.py` — настройки из `.env` (pydantic-settings): LLM / эмбеддинги / Chroma /
+  ключи доступа / лимиты частоты
 - `ingest.py` — CLI: `python ingest.py` (строит индекс Chroma из data/docs/)
 - `static/index.html` — веб-чат (один файл, vanilla JS/CSS, без сборщиков): тёмный «юридический»
   дизайн, обязательное цитирование источников (карточки кодекс/стр./фрагмент), drag&drop загрузка
-  (`/upload`), список документов (`/documents`), переиндексация (`/ingest`), статус сервера (`/health`).
+  (`/upload`), список документов (`/documents`), переиндексация (`/ingest`), статус сервера (`/health`),
+  кнопка 🔑 для ввода админ-ключа (хранится в `localStorage`, в HTML не попадает).
   XSS-safe рендер (`textContent`/`esc()`), история в `localStorage`.
+- `static/favicon.svg` — иконка (весы Фемиды), отдаётся через `/favicon.ico`
 - `bot.py` / `desktop_client.py` — Telegram-бот / десктоп (опц., из фреймворка)
 - `data/docs/` — корпус: 26 кодексов РФ (ГК×4, НК×2, ТК, УК, процессуальные, отраслевые, КоАП, Конституция). Состав — `data/docs/README.md`.
 - `chroma_db/` — векторная БД Chroma (persistent)
@@ -26,7 +31,9 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
 - Индексация: `python ingest.py` (читает `data/docs/`, пишет `chroma_db/`)
 - Запуск локально: `uvicorn app:app --reload --port 8000`
 - Открыть UI: http://localhost:8000
-- Проверка чата: `curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -H "X-API-Key: 88888888" -d "{\"question\":\"...\"}"`
+- Проверка чата: `curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -H "X-API-Key: $API_KEY" -d "{\"question\":\"...\"}"`
+- Проверка админки: `curl -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/documents`
+- Проверка лимитов: 31 запрос к `/ask` за минуту с одного IP → последний вернёт `429` + `Retry-After`
 - Деплой: см. docs/DEPLOY.md (Yandex Cloud)
 
 ## 4. Грабли и правила
@@ -53,6 +60,21 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
 - Векторное хранилище — Chroma (`chroma_db/`); переиндексация без удаления папки (под FileLock). Авто-reindex по вотчеру `data/docs/`.
 - Загрузчики: PDF (pypdf, постранично → metadata.page), DOCX (python-docx), TXT (авто-кодировка). Добавление документа → полная переиндексация.
 - Для генерации обязателен ключ GigaChat; retrieval работает и без него, но ответа не будет.
+- **Ключи разделены.** `API_KEY` — публичный, открывает только `/ask`, и он же зашит в
+  `static/index.html` (значит, не секрет: его видит любой посетитель). `ADMIN_API_KEY` —
+  для `/upload`, `/ingest`, `/documents`, `DELETE /documents/{file}`; в статику не попадает.
+  Меняя публичный ключ, **обязательно** поправьте константу `API_KEY` в `static/index.html`,
+  иначе UI получит 401. Если `ADMIN_API_KEY` пуст — админка открывается публичным ключом
+  (только для локальной разработки, на публичном стенде недопустимо).
+- **Rate limiting** живёт в памяти процесса (`app.py`, `_rl_hits`) — при нескольких репликах
+  нужен общий стор. Считается **до** проверки ключа.
+- **ВМ в Yandex Cloud:** swap 2 ГБ в `/etc/fstab` (`vm.swappiness=10`) — страховка от OOM на
+  4 ГБ RAM. Диск 30 ГБ забивает Docker build cache (до ~12 ГБ): лечится `docker builder prune -f`
+  (только неиспользуемый кэш). Перед пересборкой тегировать рабочий образ как
+  `kodeksbot-app:rollback-<дата>` — откат одной командой.
+- **Обновление кода на ВМ:** `scp` нужных файлов → `md5sum`-сверка → `docker compose build && up -d`.
+  `COPY . .` идёт после `pip install`, поэтому пересборка — секунды. Первый `/ask` после старта
+  может сбросить соединение (прогрев Chroma/BM25); ждать `Application startup complete` (~40–80 с).
 
 ## 5. Ссылки на Уровень 2
 - Архитектура и поток данных: docs/ARCHITECTURE.md
