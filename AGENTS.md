@@ -34,6 +34,8 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
 - Проверка чата: `curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -H "X-API-Key: $API_KEY" -d "{\"question\":\"...\"}"`
 - Проверка админки: `curl -H "X-API-Key: $ADMIN_API_KEY" http://localhost:8000/documents`
 - Проверка лимитов: 31 запрос к `/ask` за минуту с одного IP → последний вернёт `429` + `Retry-After`
+- Тесты (герметичны, без сети/GPU/корпуса): `pytest -q` — 20 тестов, ~20 с
+- Линт: `ruff check .` (обязательный гейт в CI, должен быть чистым)
 - Деплой: см. docs/DEPLOY.md (Yandex Cloud)
 
 ## 4. Грабли и правила
@@ -72,9 +74,26 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
   4 ГБ RAM. Диск 30 ГБ забивает Docker build cache (до ~12 ГБ): лечится `docker builder prune -f`
   (только неиспользуемый кэш). Перед пересборкой тегировать рабочий образ как
   `kodeksbot-app:rollback-<дата>` — откат одной командой.
-- **Обновление кода на ВМ:** `scp` нужных файлов → `md5sum`-сверка → `docker compose build && up -d`.
-  `COPY . .` идёт после `pip install`, поэтому пересборка — секунды. Первый `/ask` после старта
-  может сбросить соединение (прогрев Chroma/BM25); ждать `Application startup complete` (~40–80 с).
+- **Обновление кода на ВМ — ТОЛЬКО через git.** `git fetch origin main && git reset --hard origin/main`
+  → `docker compose build` → `docker compose up -d`. Копирование файлов через `scp` (и «сверку по md5»)
+  использовать НЕЛЬЗЯ: так копится незаметное расхождение — ВМ уехала на 20+ коммитов назад, при том что
+  сервис выглядел рабочим. Перед сбросом: бэкап `.env` (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`)
+  и тег рабочего образа.
+- **`requirements.txt` + `pip install`:** torch запинен как `torch==<ver>+cpu`, а сборки с локальным
+  тегом `+cpu` есть **только** на индексе PyTorch. Без `--extra-index-url https://download.pytorch.org/whl/cpu`
+  установка падает (на PyPI такого файла нет) — так CI был красным две недели.
+- **Тесты обязаны быть герметичными.** `data/docs/` и `chroma_db/` в `.gitignore` — в CI их нет.
+  `tests/conftest.py` выставляет env (hash-эмбеддер, временный `CHROMA_DIR`, `DOCS_DIR` → `tests/fixtures/docs/`,
+  `RERANK_MODEL=""`, `RAG_DISABLE_WATCHER=1`) **до** импорта `config`. Любой новый тест, которому нужен
+  корпус, обязан брать его из фикстур, а не из рабочего `data/docs/`.
+- **Reranker:** дефолт — `models/all-MiniLM-L6-v2` (bi-encoder, CPU-friendly). `jina-reranker-v2-base-multilingual`
+  точнее, но на CPU неприемлемо медленный — только под GPU. В `docker-compose.yml` переменная
+  `RERANK_MODEL` задана явно.
+- **Пересборка образа — ~20 мин**, а не секунды: `COPY requirements.txt` входит в кэш-ключ
+  `RUN pip install`, и правка даже комментария в манифесте тянет полную переустановку torch.
+  `COPY . .` идёт после `pip install`, поэтому правки кода сами по себе дёшевы.
+- Первый `/ask` после старта может сбросить соединение (прогрев эмбеддингов + reranker);
+  ждать `Application startup complete` (~90 с на ВМ).
 
 ## 5. Ссылки на Уровень 2
 - Архитектура и поток данных: docs/ARCHITECTURE.md
