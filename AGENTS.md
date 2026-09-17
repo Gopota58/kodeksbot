@@ -93,7 +93,20 @@ FastAPI + LangChain + Chroma (векторная БД) + GigaChat (Сбер, ч�
   `RUN pip install`, и правка даже комментария в манифесте тянет полную переустановку torch.
   `COPY . .` идёт после `pip install`, поэтому правки кода сами по себе дёшевы.
 - Первый `/ask` после старта может сбросить соединение (прогрев эмбеддингов + reranker);
-  ждать `Application startup complete` (~90 с на ВМ).
+  ждать `Application startup complete` (~90 с на ВМ). Сразу после `up -d` контейнер уже `Up`,
+  но приложение ещё не готово — опрашивать `/health`, а не верить `docker ps`.
+- **Зависшее имя контейнера.** Прерванный `docker compose up -d` (таймаут, Ctrl-C) оставляет в
+  демоне запись: следующий `up` падает с `Conflict … name is already in use`, хотя `docker ps -a`
+  этого контейнера уже не показывает. `docker rm -f` и `--force-recreate` не помогают —
+  лечится `sudo systemctl restart docker` (данные в bind-mounts не страдают).
+- **Долгие ssh-команды из Git Bash обрываются по SIGTERM на 120 с.** Сборку и другие долгие
+  операции запускать отделённо (`setsid nohup … > /tmp/build.log 2>&1 &`) и забирать вывод позже.
+  Ждать окончания сборки по строке `Image … Built` в логе, а НЕ по `pgrep -f buildkit` —
+  этот процесс живёт постоянно и совпадение будет всегда.
+- Транзиентный сбой сети ВМ: `failed to fetch anonymous token … TLS handshake timeout` к
+  `auth.docker.io`. Повторить сборку; рабочий контейнер до успешной проверки новой сборки не удалять.
+- `docker exec` без рабочей директории не видит модули проекта — нужен `-w /app`.
+  Инлайн-python через ssh ломается на кавычках: класть скрипт heredoc'ом в файл + `docker cp`.
 
 ## 5. Ссылки на Уровень 2
 - Архитектура и поток данных: docs/ARCHITECTURE.md
