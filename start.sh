@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Кроссплатформенный запуск «Котобазы» (Linux / macOS)
+# Быстрый запуск КодексБот (Linux / macOS)
 set -e
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "Python 3 не найден! Установите Python 3.10+."
+  echo "Python 3 не найден! Нужен Python 3.12+ (numpy 2.5.2 требует >= 3.12)."
   exit 1
 fi
 

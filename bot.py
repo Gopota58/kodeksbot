@@ -1,5 +1,5 @@
 """
-Telegram-бот «Котобаза» 😺
+Telegram-бот «КодексБот» ⚖️
 
 Тонкий HTTP-клиент к локальному RAG-серверу (app.py на :8000). Бот НЕ держит
 свой экземпляр RAGEngine — единственный владелец векторного индекса и
@@ -11,16 +11,16 @@ Telegram-бот «Котобаза» 😺
 ОБХОД БЛОКИРОВКИ TELEGRAM В РФ
 ------------------------------
 В России api.telegram.org заблокирован на уровне сети (прямой доступ — таймаут).
-На машине поднят локальный VPN-клиент KiberportalX, который даёт SOCKS5/HTTP
-прокси на 127.0.0.1:7890. Весь трафик бота к Telegram идёт ЧЕРЕЗ этот прокси
-(поле proxy в HTTPXRequest). К локальному веб-серверу (:8000) бот ходит
-напрямую (trust_env=False), прокси не трогая.
+Если на машине поднят локальный SOCKS5/HTTP-прокси, весь трафик бота к Telegram
+идёт ЧЕРЕЗ него (поле proxy в HTTPXRequest). К локальному веб-серверу (:8000)
+бот ходит напрямую (trust_env=False), прокси не трогая.
 
 Настройка через .env:
   TELEGRAM_BOT_TOKEN — токен бота
   TELEGRAM_PROXY     — прокси к Telegram (http://127.0.0.1:7890 или socks5://...)
   RAG_API_URL        — адрес RAG-сервера (по умолчанию http://localhost:8000)
-  API_KEY            — ключ X-API-Key для /ask и /ingest (берётся из config)
+  API_KEY            — публичный ключ X-API-Key для /ask (берётся из config)
+  ADMIN_API_KEY      — админский ключ для /ingest (пусто = используется API_KEY)
 """
 import asyncio
 import logging
@@ -45,20 +45,28 @@ TOKEN = settings.telegram_bot_token
 PROXY = settings.telegram_proxy
 # Локальный RAG-сервер (веб-приложение app.py).
 RAG_API_URL = settings.rag_api_url
-RAG_API_KEY = settings.api_key
+RAG_API_KEY = settings.api_key                        # публичный: только /ask
+RAG_ADMIN_KEY = settings.resolved_admin_api_key       # админ: /ingest
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     level=logging.INFO,
 )
-log = logging.getLogger("kotobaza_bot")
+log = logging.getLogger("kodeksbot_bot")
 
-# HTTP-клиент к локальному RAG-серверу. trust_env=False — ходить на localhost
+# HTTP-клиенты к локальному RAG-серверу. trust_env=False — ходить на localhost
 # напрямую, минуя любые переменные прокси (иначе запрос уйдёт в Telegram-прокси).
 _rag = httpx.Client(
     base_url=RAG_API_URL,
     headers={"X-API-Key": RAG_API_KEY},
     timeout=httpx.Timeout(120.0),
+    trust_env=False,
+)
+# Отдельный клиент для админ-эндпоинтов: /ingest с публичным ключом вернёт 401.
+_rag_admin = httpx.Client(
+    base_url=RAG_API_URL,
+    headers={"X-API-Key": RAG_ADMIN_KEY},
+    timeout=httpx.Timeout(600.0),   # переиндексация корпуса — долгая операция
     trust_env=False,
 )
 
@@ -71,8 +79,8 @@ def ask_rag(question: str) -> str:
 
 
 def reindex_rag() -> dict:
-    """Синхронный вызов /ingest (полная переиндексация docs/)."""
-    r = _rag.post("/ingest")
+    """Синхронный вызов /ingest (полная переиндексация docs/) по админ-ключу."""
+    r = _rag_admin.post("/ingest")
     r.raise_for_status()
     return r.json()
 
@@ -99,21 +107,21 @@ def split_text(text: str, limit: int = 4000):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Привет! Я Котобаза 😺 — эксперт по уходу за рыжим котом.\n"
-        "Задай вопрос по уходу, кормлению, здоровью и поведению — отвечу на "
-        "основе базы знаний.\n\nКоманды: /start, /help, /reindex"
+        "Привет! Я КодексБот ⚖️ — ассистент по российскому законодательству.\n"
+        "Задай вопрос по кодексам РФ — отвечу со ссылками на конкретные статьи "
+        "и фрагменты документов.\n\nКоманды: /start, /help, /reindex"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Просто пиши мне вопросы про котов, например:\n"
-        "• как кормить рыжего кота?\n"
-        "• чем мыть кота и как часто?\n"
-        "• если кот мяукает, что делать?\n\n"
-        "Я ищу ответ в базе знаний и отвечаю по делу.\n"
+        "Просто задавай юридический вопрос, например:\n"
+        "• каков срок исковой давности по гражданским делам?\n"
+        "• какая ответственность за задержку зарплаты?\n"
+        "• что считается мелким хищением?\n\n"
+        "Я ищу ответ в корпусе кодексов и отвечаю по делу, указывая источник.\n"
         "/reindex — пересобрать индекс вручную (обычно не нужен: "
-        "папка docs/ переиндексируется автоматически)."
+        "папка data/docs/ переиндексируется автоматически)."
     )
 
 

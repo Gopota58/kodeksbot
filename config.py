@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parent
 
 # --- Жёстко отключаем любую попытку скачивания моделей из сети ---
-# Веса rubert-tiny2 уже лежат локально в models/rubert-tiny2 и должны загружаться
+# Веса модели эмбеддингов уже лежат локально в models/ и должны загружаться
 # только с диска. Если модель на диске отсутствует — код бросит явную ошибку,
 # а не попытается что-то докачать. Это основная гарантия, что ни при первом
 # запуске, ни когда-либо ещё не произойдёт обращения к Hugging Face за весами.
@@ -58,8 +58,8 @@ class Settings(BaseSettings):
     embed_trust_remote_code: bool = True  # Giga-модель требует кастомный код Сбера
 
     # --- Провайдер эмбеддингов ---
-    # "local" — HuggingFace (cointegrated/rubert-tiny2), грузится СТРОГО локально
-    #            из models/rubert-tiny2. Скачивание из сети отключено (см. HF_HUB_OFFLINE).
+    # "local" — локальная модель из models/ (по умолчанию Giga-Embeddings-480M).
+    #            Грузится СТРОГО с диска: скачивание из сети отключено (HF_HUB_OFFLINE).
     # "api"   — OpenAI-совместимый endpoint (напр. nomic-embed-text в LM Studio).
     embed_provider: str = "local"
     embed_api_base_url: str = ""      # пусто -> берётся llm_base_url
@@ -117,7 +117,7 @@ class Settings(BaseSettings):
         return self.admin_api_key.strip() or self.api_key
 
     def resolve_embedding_model(self) -> str:
-        """Путь к локальной модели эмбеддингов (models/rubert-tiny2).
+        """Путь к локальной модели эмбеддингов (по умолчанию Giga-Embeddings-480M).
 
         Всегда возвращает локальную папку. Никогда не возвращает HF repo-id,
         поэтому скачивание из сети исключено: при отсутствии весов на диске
@@ -129,9 +129,10 @@ class Settings(BaseSettings):
         if not (local.exists() and (local / "config.json").exists()):
             raise FileNotFoundError(
                 f"Локальная модель эмбеддингов не найдена в: {local}\n"
-                f"Положите веса rubert-tiny2 (model.safetensors, pytorch_model.bin, "
-                f"tinybert-ru-labse-adapter-v2.pt) в эту папку. Авто-загрузка из "
-                f"сети отключена (HF_HUB_OFFLINE=1)."
+                f"Положите веса модели ({self.embedding_model_id}) в эту папку либо "
+                f"укажите свой путь в EMBEDDING_MODEL_ID / model_dir. "
+                f"Авто-загрузка из сети отключена (HF_HUB_OFFLINE=1): "
+                f"для явного скачивания запустите `python download_model.py`."
             )
         return str(local)
 

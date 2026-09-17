@@ -40,7 +40,9 @@ data/docs/*.pdf|docx|txt
 ## Модули
 - `config.py` — настройки из `.env` (pydantic-settings): LLM / эмбеддинги / Chroma / GigaChat.
 - `rag/engine.py` — `RAGEngine`: эмбеддинги, Chroma, гибридный ретривер, LLM, reindex, watcher.
-- `app.py` — FastAPI: `/ask`, `/ingest`, `/upload`, `/documents`, `/health`, CORS, статика.
+- `app.py` — FastAPI: `/ask`, `/ingest`, `/upload`, `/documents`, `/health`, CORS, статика,
+  **rate limiting** (скользящее окно 60 с на IP) и **разделение ключей** (`API_KEY` — только
+  `/ask`, `ADMIN_API_KEY` — всё, что меняет состояние).
 - `ingest.py` — CLI: `python ingest.py`.
 - `static/index.html` — веб-чат (один файл, vanilla JS/CSS): тёмный «юридический» дизайн,
   обязательное цитирование источников (карточки кодекс/стр./фрагмент + «Копировать»),
@@ -70,3 +72,6 @@ data/docs/*.pdf|docx|txt
 - [x] тёмный веб-UI с цитированием источников
 - [x] деплой в Yandex Cloud (Compute VM, Docker Compose, CPU) — см. [DEPLOY.md](DEPLOY.md)
 - [x] reranker поверх гибридной выдачи (по умолчанию all-MiniLM-L6-v2, опц. jina cross-encoder)
+- [x] разделение публичного и админского ключей доступа (публичный — только `/ask`)
+- [x] rate limiting (скользящее окно на IP, `429` + `Retry-After`, считается до проверки ключа)
+- [x] герметичные тесты (`pytest`) и обязательный гейт `ruff` в CI

@@ -41,6 +41,8 @@
 - 🌗 **Тёмный веб-интерфейс** в «юридическом» стиле (золото/бордовый), адаптивный,
   с историей диалога в `localStorage` (XSS-safe рендер).
 - 💬 **Telegram-бот** и десктоп-клиент — опционально (включены в репозиторий).
+  Боту нужен `TELEGRAM_BOT_TOKEN`; `/ask` он дергает публичным ключом, `/reindex` —
+  админским.
 - ☁️ **Деплой в Yandex Cloud** — Docker Compose на Compute VM, CPU-only.
 - 🛡 **Разделение ключей доступа** — публичный ключ открывает только `/ask`; загрузка,
   переиндексация и удаление документов требуют отдельный админский ключ, который в
@@ -56,7 +58,9 @@
 
 ![Веб-интерфейс КодексБот](docs/assets/ui.png)
 
-> Живой демо-сервер: http://89.169.185.183:8000/
+> Живой стенд развёрнут в Yandex Cloud (Docker Compose, CPU). Адрес демо не
+> публикуется: стенд на бесплатном гранте, а `/ask` упирается в квоту GigaChat —
+> поднимите свой экземпляр по [docs/DEPLOY.md](docs/DEPLOY.md) или запустите локально.
 
 ---
 
@@ -93,20 +97,31 @@ flowchart LR
 ### Локально
 
 ```bash
-# 1. Зависимости
-pip install -r requirements.txt
+# 1. Зависимости (Python 3.12+)
+pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+#   индекс PyTorch обязателен: torch запинен CPU-сборкой (+cpu), на PyPI её нет
 
 # 2. Конфиг (секреты — только в .env, он в .gitignore)
 cp .env.example .env
 #   открой .env и впиши LLM_API_KEY (Authorization key из developers.sber.ru)
 
-# 3. Построить индекс из data/docs/
+# 3. Веса модели эмбеддингов (в репозиторий не входят — см. «Что не лежит в репозитории»)
+python download_model.py
+
+# 4. Положить документы в data/docs/ (PDF / DOCX / TXT) и построить индекс
 python ingest.py
 
-# 4. Запустить сервер
+# 5. Запустить сервер
 uvicorn app:app --port 8000
 #    открыть http://localhost:8000
 ```
+
+> **Что не лежит в репозитории.** `models/` (≈1.3 ГБ весов) и `data/docs/` (26 PDF
+> кодексов) исключены через `.gitignore` — репозиторий держим лёгким. Модель
+> ставится шагом 3 (`python download_model.py`, один раз, нужен доступ к
+> Hugging Face); в рабочем режиме приложение грузит веса **строго с диска**
+> (`HF_HUB_OFFLINE=1`) и в сеть не ходит. Корпус — свой: положите документы в
+> `data/docs/` и запусти `python ingest.py`; без модели и корпуса `/ask` не заработает.
 
 Проверка чата:
 
@@ -184,16 +199,19 @@ kodeksbot/
 ├── app.py                 # FastAPI: /ask, /ingest, /upload, /documents, /health + rate limiting
 ├── config.py              # настройки из .env (pydantic-settings)
 ├── ingest.py              # CLI: построение индекса Chroma из data/docs/
+├── download_model.py      # явное скачивание весов эмбеддингов в models/ (один раз)
 ├── rag/engine.py          # ядро RAG: эмбеддинги, Chroma, гибридный ретривер, GigaChat
 ├── static/index.html      # тёмный веб-чат (vanilla JS/CSS, без сборщиков)
 ├── static/favicon.svg     # иконка (весы Фемиды)
-├── bot.py / desktop_client.py  # Telegram-бот / десктоп (опц.)
-├── data/docs/             # корпус: 26 кодексов РФ (PDF/DOCX)
+├── bot.py / desktop_client.py  # Telegram-бот / десктоп-клиент (опц.)
+├── start.sh / Makefile    # быстрый запуск и типичные команды
+├── data/docs/             # корпус: 26 кодексов РФ (PDF/DOCX) — в .gitignore
+├── models/                # веса эмбеддингов и reranker — в .gitignore
 ├── certs/                 # Russian Trusted Root CA (для SSL GigaChat)
-├── docs/                  # документация (Уровень 2)
-├── tests/                 # pytest-набор
+├── docs/                  # документация (Уровень 2) + docs/assets/ui.png
+├── tests/                 # pytest-набор (герметичный: без сети, GPU и рабочего корпуса)
 ├── evaluation/            # golden-датасет и метрики качества
-├── Dockerfile / docker-compose.yml
+├── Dockerfile / docker-compose.yml / docker-entrypoint.sh
 └── .github/workflows/ci.yml
 ```
 
@@ -241,6 +259,21 @@ kodeksbot/
 - **Что ещё стоит сделать при выходе за пределы демо:** терминировать TLS перед приложением
   (домен + reverse-proxy с Let's Encrypt), закрыть порт 8000 в группе безопасности и
   оставить наружу только 443, вынести rate limiting в Redis при нескольких репликах.
+
+---
+
+## ⚠️ Ограничения
+
+- **Не юридическая консультация.** Ассистент отвечает по загруженному корпусу и
+  может ошибаться, а законы меняются — сверяйтесь с официальными источниками.
+- **Качество = корпус + модель.** Ответ формируется только по найденным фрагментам;
+  если в корпусе нет ответа, ассистент так и скажет (порог иррелевантности 1.35).
+- **GigaChat недетерминирован** даже при `temperature=0` — на коротких запросах
+  возможны ложные «нет ответа».
+- **Rate limiting живёт в памяти процесса** — при нескольких репликах нужен общий
+  стор (Redis).
+- Индекс зависит от модели эмбеддингов: смена модели ⇒ обязательная пересборка
+  (`python ingest.py`).
 
 ---
 

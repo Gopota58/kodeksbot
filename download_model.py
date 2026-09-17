@@ -1,15 +1,20 @@
 """
-ВНИМАНИЕ: автоматическое скачивание отключено.
+Явное скачивание модели эмбеддингов в `models/`.
 
-Модель rubert-tiny2 уже находится локально в ./models/rubert-tiny2
-(веса model.safetensors, pytorch_model.bin, tinybert-ru-labse-adapter-v2.pt).
-Проект настроен на строго локальную загрузку (HF_HUB_OFFLINE=1 в config.py),
-поэтому никакая авто-загрузка из сети не производится.
+По умолчанию проект работает СТРОГО офлайн: `config.py` выставляет
+`HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`, поэтому ни при старте сервера,
+ни при индексации никаких обращений к Hugging Face не происходит.
 
-Этот скрипт оставлен только для справки: он скачает модель лишь в том случае,
-если локальная папка отсутствует, и только при явном запуске
-`python download_model.py`. Автоматически нигде не вызывается.
+Веса моделей в репозиторий не входят (`models/` в `.gitignore`) — их нужно
+получить один раз:
+
+    python download_model.py
+
+Скрипт ничего не делает, если модель уже лежит на диске. Автоматически
+(например, из `docker-entrypoint.sh`) он запускается только как страховка и
+при отсутствии сети просто предупреждает, а не падает.
 """
+import os
 from pathlib import Path
 
 from config import settings
@@ -19,7 +24,11 @@ if __name__ == "__main__":
     if (local / "config.json").exists():
         print(f"Модель уже присутствует локально в {local}. Скачивание не требуется.")
     else:
-        # Локальной модели нет — скачиваем (требует доступа к Hugging Face).
+        # Импорт config выставил HF_HUB_OFFLINE=1 — для явного скачивания
+        # снимаем offline-флаги, иначе huggingface_hub откажется работать.
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
         from huggingface_hub import snapshot_download
 
         print(

@@ -23,20 +23,13 @@ _diag*.py
 # Служебные данные AI-агента (память воркспейса) — не публикуем
 .workbuddy-ai/
 
-# Локальные генераторы шуточного корпуса (в портфолио — серьёзный docs/)
-rewrite_cats.py
-gender_fix.py
-
 # Generated / large data (recreate locally)
 chroma_db/
 models/
 evaluation/results.json
 
-# Unrelated user data (keep out of the portfolio repo)
-hh_ai/
-
-# Intermediate working copy of the corpus (docs/ + docs_backup/ are enough)
-docs_pass1/
+# Caches линтера/тестов
+.ruff_cache/
 
 # Build artifacts
 dist/

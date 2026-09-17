@@ -10,16 +10,16 @@ API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/ask")
 # Публичный ключ (только /ask) — должен совпадать с API_KEY в .env и static/index.html
 API_KEY = os.environ.get("API_KEY", "kb_pub_ahMilkR7bgXKaSDs9FKX6hC1")
 
-# trust_env=False — ходить на localhost напрямую, минуя системный прокси
-# (KiberportalX/др.), иначе запрос к локальному серверу уходит в прокси и
-# возвращает 500. Сервер и бот уже так делают — клиент тоже.
+# trust_env=False — ходить на localhost напрямую, минуя системный прокси,
+# иначе запрос к локальному серверу уходит в прокси и возвращает 500.
+# Сервер и бот уже так делают — клиент тоже.
 _session = requests.Session()
 _session.trust_env = False
 
 class RAGClient:
     def __init__(self, root):
         self.root = root
-        self.root.title("Котобаза — RAG-бот")
+        self.root.title("КодексБот — RAG-ассистент по кодексам РФ")
         self.root.geometry("600x500")
         self.root.resizable(True, True)
 
@@ -44,7 +44,10 @@ class RAGClient:
         self.status_label.pack(fill=tk.X, padx=10, pady=(0, 5))
 
         # Приветствие
-        self.add_message("Бот", "Привет! Я Котобаза 😺\nЗадай мне вопрос по документам.")
+        self.add_message(
+            "Бот",
+            "Привет! Я КодексБот ⚖️\nЗадай вопрос по кодексам РФ — отвечу со ссылками на статьи.",
+        )
 
     def add_message(self, sender, text):
         self.output.config(state=tk.NORMAL)
@@ -59,7 +62,7 @@ class RAGClient:
         self.entry.delete(0, tk.END)
 
         self.add_message("Вы", question)
-        self.status_label.config(text="Думаю... 🐱")
+        self.status_label.config(text="Думаю... ⚖️")
         self.send_btn.config(state=tk.DISABLED)
 
         # Запрос в отдельном потоке, чтобы не блокировать GUI

@@ -23,7 +23,7 @@ import tempfile
 FIXTURE_DOCS = pathlib.Path(__file__).resolve().parent / "fixtures" / "docs"
 
 os.environ["EMBED_PROVIDER"] = "hash"
-os.environ["CHROMA_DIR"] = tempfile.mkdtemp(prefix="kotobaza_test_")
+os.environ["CHROMA_DIR"] = tempfile.mkdtemp(prefix="kodeksbot_test_")
 os.environ["DOCS_DIR"] = str(FIXTURE_DOCS)
 os.environ["RERANK_MODEL"] = ""
 # Фоновый watcher (watchfiles) в тестах не нужен, а на Linux его поток падает
