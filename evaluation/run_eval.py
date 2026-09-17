@@ -23,13 +23,13 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from rag.engine import RAGEngine
 from evaluation.metrics import (
-    faithfulness,
     answer_relevancy,
     context_precision,
     context_recall_lexical,
+    faithfulness,
 )
+from rag.engine import RAGEngine
 
 
 def main():

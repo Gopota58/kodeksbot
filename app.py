@@ -4,19 +4,21 @@ FastAPI-обёртка над RAGEngine (КодексБот).
 Сама логика RAG вынесена в `rag/engine.py`, здесь только HTTP-интерфейс:
 аутентификация, rate limiting, CORS, отдача статики и маршрутизация на методы движка.
 """
+import logging
 import os
 import time
-import logging
 from collections import defaultdict, deque
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Request
-from fastapi.staticfiles import StaticFiles
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import settings
 from rag.engine import RAGEngine
+
+log = logging.getLogger("app")
 
 # --- Инициализация движка (загружает эмбеддинги и открывает векторную БД) ---
 engine = RAGEngine(settings)
@@ -193,7 +195,14 @@ async def ask(question: Question, api_key: str = Depends(verify_api_key)):
         answer, sources = engine.ask_with_sources(question.question)
         return {"answer": answer, "sources": sources}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Публичный эндпоинт: текст исключения наружу НЕ отдаём — в нём могут быть
+        # пути на диске, имена коллекций и прочая внутренняя кухня. Настоящая причина
+        # (с traceback) уходит в лог сервера.
+        log.exception("Ошибка обработки /ask")
+        raise HTTPException(
+            status_code=500,
+            detail="Внутренняя ошибка сервера. Попробуйте позже.",
+        ) from e
 
 
 @app.post("/ingest", tags=["Admin"])
@@ -207,7 +216,8 @@ async def ingest_documents(api_key: str = Depends(verify_admin_key)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log.exception("Ошибка переиндексации (/ingest)")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/upload", tags=["Admin"])
@@ -227,11 +237,12 @@ async def upload_file(
             "details": result,
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log.exception("Ошибка загрузки файла (/upload)")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/documents", tags=["Admin"])
@@ -256,8 +267,9 @@ async def delete_document(
             "details": result,
         }
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log.exception("Ошибка удаления документа (DELETE /documents)")
+        raise HTTPException(status_code=500, detail=str(e)) from e

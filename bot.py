@@ -22,20 +22,19 @@ Telegram-бот «Котобаза» 😺
   RAG_API_URL        — адрес RAG-сервера (по умолчанию http://localhost:8000)
   API_KEY            — ключ X-API-Key для /ask и /ingest (берётся из config)
 """
-import os
 import asyncio
 import logging
 
 import httpx
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
-from telegram.constants import ChatAction
 from telegram.request import HTTPXRequest
 
 from config import settings

@@ -20,6 +20,10 @@ select = ["E", "F", "I", "UP", "B"]
 # E501 — длинные строки докстрингов/промптов; B008 — FastAPI Depends() в дефолтах аргументов.
 ignore = ["E501", "B008"]
 
+[tool.ruff.lint.per-file-ignores]
+# run_eval.py добавляет корень проекта в sys.path ДО импортов — E402 здесь намеренный.
+"evaluation/run_eval.py" = ["E402"]
+
 [tool.black]
 line-length = 100
 target-version = ["py312"]

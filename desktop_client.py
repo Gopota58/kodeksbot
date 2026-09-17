@@ -1,9 +1,9 @@
 import os
-import tkinter as tk
-from tkinter import scrolledtext, messagebox
-import requests
-import json
 import threading
+import tkinter as tk
+from tkinter import scrolledtext
+
+import requests
 
 # --- КОНФИГУРАЦИЯ (можно переопределить через переменные окружения) ---
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000/ask")

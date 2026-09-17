@@ -5,26 +5,26 @@ RAGEngine — переиспользуемое ядро движка RAG (ада
 (вектор + BM25/TF-IDF, слияние через Reciprocal Rank Fusion), LLM (GigaChat) и
 RAG-цепочку. Загрузка документов — PDF / DOCX / TXT (корпус российских кодексов).
 """
-import os
 import json
+import logging
+import os
 import pathlib
 import re
 import threading
-import httpx
-import logging
 
-import chromadb
 import chardet
+import chromadb
+import httpx
 import numpy as np
+from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
 from langchain_openai import ChatOpenAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from config import settings as default_settings
@@ -709,7 +709,9 @@ class RAGEngine:
             docs = (res.get("documents") or [[]])[0]
             metas = (res.get("metadatas") or [[]])[0]
             dists = (res.get("distances") or [[]])[0]
-            for doc, meta, dist in zip(docs, metas, dists):
+            # strict=False: Chroma отдаёт параллельные списки равной длины, но при
+            # аномалии лучше отдать укороченный результат, чем уронить поиск.
+            for doc, meta, dist in zip(docs, metas, dists, strict=False):
                 out.append((Document(page_content=doc, metadata=meta or {}), float(dist)))
             return out
         except Exception as e:
@@ -730,6 +732,11 @@ class RAGEngine:
         В обоих случаях возвращаем пусто → LLM честно «нет ответа», без ложных цитат.
         """
         n = len(self._chunk_texts)
+        if n == 0:
+            # Пустой индекс (первый запуск без ingest, очищенный chroma_db, свежий деплой):
+            # Chroma валит запрос с `n_results=0` → TypeError. Отдаём пусто — «цитировать
+            # нечего»; вызывающий код (ask_with_sources) корректно вернёт «нет ответа».
+            return []
         top_n = min(20, n)
         if self._vectorizer is None:
             # Нет BM25-индекса — только векторный поиск по первому варианту
@@ -810,11 +817,16 @@ class RAGEngine:
                 answer = ""
             if answer:
                 return answer
-            last_error = ValueError(
-                "LLM вернул пустой ответ. Вероятная причина — reasoning-модель без "
-                "отключённого режима размышлений. Используйте не-reasoning модель "
-                "(GigaChat-2 / GigaChat-Pro) или задайте LLM_EXTRA_BODY."
-            )
+            if last_error is None:
+                # Ошибки не было — значит LLM действительно вернул пустую строку.
+                last_error = ValueError(
+                    "LLM вернул пустой ответ. Вероятная причина — reasoning-модель без "
+                    "отключённого режима размышлений. Используйте не-reasoning модель "
+                    "(GigaChat-2 / GigaChat-Pro) или задайте LLM_EXTRA_BODY."
+                )
+        # Наружу отдаём ИСХОДНУЮ ошибку, если она была: иначе реальная причина
+        # (сбой Chroma, таймаут/401 LLM и т.п.) подменялась невнятным «пустой ответ»
+        # и инцидент невозможно было диагностировать по логам.
         raise last_error
 
     @staticmethod
@@ -990,7 +1002,7 @@ class RAGEngine:
                 continue
             out.append(Document(page_content=self._chunk_texts[i], metadata=meta or {}))
         # Приоритет — чанку с самим заголовком «СТАТЬЯ N.» (по всему тексту, не только первые 200 симв.)
-        out.sort(key=lambda d: 0 if re.search(r"СТАТЬЯ\s*%d\." % article_no, d.page_content, re.IGNORECASE) else 1)
+        out.sort(key=lambda d: 0 if re.search(rf"СТАТЬЯ\s*{article_no}\.", d.page_content, re.IGNORECASE) else 1)
         return out
 
     def _hyde_vector(self, question: str):

@@ -19,12 +19,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # --extra-index-url обязателен: в requirements.txt torch запинен как
+          # `torch==<ver>+cpu`, а сборки с локальным тегом `+cpu` публикуются
+          # только на индексе PyTorch — на обычном PyPI их нет.
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
           pip install ruff
 
       - name: Lint (ruff)
+        # Обязательный гейт: `ruff check .` проходит без замечаний, регресс ловим в CI.
         run: ruff check .
-        continue-on-error: true    # линтер — рекомендация; зелёный статус определяет pytest
 
       - name: Tests (pytest)
         run: pytest -q
